@@ -1,12 +1,31 @@
-# WALL-8  8 Bits Computer
+<div align="center">
 
+<h1>WALL-8 — 8-Bit Computer</h1>
 
-O **WALL-8** é um projeto de computador didático e modular que fiz para me aprofundar mais em Eletronica Digital e entender como o Hardware e uma Linguagem de Programação se comunicam. Em vez de concentrar a CPU, a memória e os periféricos em um único circuito integrado, ele torna visíveis com leds os blocos que normalmente ficam escondidos: registradores, ALU, contador de programa, pilha, barramentos, decodificação de endereços e ROMs de controle.Pensei assim para deixar ele funcionando em um quadro na parede de casa :D. 
+<p>
+O <strong>WALL-8</strong> é um computador didático e modular que fiz para me aprofundar em Eletrônica Digital e entender melhor como o hardware e uma linguagem de programação se comunicam.
+</p>
 
+<p>
+Em vez de concentrar a CPU, a memória e os periféricos em um único circuito integrado, ele deixa visíveis, por meio de LEDs, os blocos que normalmente ficam escondidos: registradores, ALU, contador de programa, pilha, barramentos, decodificação de endereços e ROMs de controle.
+</p>
 
-O objetivo é permitir acompanhar o caminho de cada byte e entender como uma instrução de Assembly se transforma em sinais elétricos no hardware.
+<p>
+Pensei nele assim para deixá-lo funcionando em um quadro na parede de casa :D
+</p>
 
-o sistema todo foi pensado em usar portas logicas da familia 74HC e mais alguns CIs simples, Toda em PTH para Ter uma caracteristica mais retro, comparavel e inspiravel em computadores da decada de 60/70.
+<p>
+A ideia é poder acompanhar o caminho de cada byte e observar como uma instrução em Assembly se transforma em sinais elétricos dentro do hardware.
+</p>
+
+<p>
+Todo o sistema foi pensado para utilizar portas lógicas da família <strong>74HC</strong> e alguns outros CIs simples. A construção é inteiramente em componentes <strong>PTH</strong>, dando uma característica mais retrô, inspirada nos computadores das décadas de 60 e 70.
+</p>
+
+</div>
+
+---
+
 
 ![Visual Completo da PCB](PCB_3D.png)
 
@@ -416,7 +435,7 @@ As páginas `Y6` e `Y7` do I/O permanecem livres para novos dispositivos.
 
 ## Interface de vídeo
 
-A GPU é uma placa separada com VRAM própria. O README documenta apenas o contrato visível pela CPU; detalhes de temporização VGA, arbitragem da VRAM, fonte e circuito ficam na [especificação da placa de vídeo](Software/wall8_placa_video.md).
+A GPU é uma placa separada com VRAM própria. O README documenta apenas o contrato visível pela CPU; detalhes de temporização VGA, arbitragem da VRAM, fonte e circuito ficam na [especificação da placa de vídeo](Hardware/wall8_GPU_Hardware.md).
 
 ### Registradores
 
@@ -450,7 +469,7 @@ Enquanto `BUSY=1`, o software pode ler `VIDEO_STATUS`, mas não deve alterar `VI
 | `0x00` | `VIDEO_CLEAR` | Limpa a área usada pelo modo atual |
 | `0x04` | `CURSOR_HIDE` | Esconde o cursor do modo texto |
 | `0x05` | `CURSOR_SHOW` | Mostra o cursor do modo texto |
-| `0x11` | `MODE_TEXT_40X30` | Texto 40×30, fonte 8×8 e escala 2× |
+| `0x11` | `MODE_TEXT_80X30` | Texto 80×30, fonte 8×8 e escala 2× apenas na vertical|
 | `0x12` | `MODE_GFX_320X240` | Gráfico 320×240 monocromático, escala 2× |
 | `0x13` | `MODE_GFX_160X120` | Gráfico 160×120 monocromático, escala 4× |
 | `0x20` | `VRAM_READ` | Lê a posição indicada por `VIDEO_X` e `VIDEO_Y` |
@@ -459,7 +478,7 @@ Enquanto `BUSY=1`, o software pode ler `VIDEO_STATUS`, mas não deve alterar `VI
 
 | Modo | `VIDEO_X` | `VIDEO_Y` | Significado de `VIDEO_DATA` |
 |---|---|---|---|
-| Texto 40×30 | `0-39` | `0-29` | Código de caractere; 40 bytes por linha |
+| Texto 80×30 | `0-79` | `0-29` | Código de caractere; 80 bytes por linha |
 | Gráfico 320×240 | `0-39` | `0-239` | 8 pixels por byte; 40 bytes por linha |
 | Gráfico 160×120 | `0-19` | `0-119` | 8 pixels por byte; 20 bytes por linha |
 
@@ -557,7 +576,7 @@ Ao escrever software para periféricos, respeite os níveis ativos indicados pel
 
 ### Hardware
 
-A pasta [`Hardware`](Hardware/) contém o projeto do Proteus e o PDF [`Hardware_Completo.pdf`](Hardware/Hardware_Completo.pdf), que possui somente as folhas do esquema eletrônico. Esse PDF é útil para consulta direta do circuito e permanece separado do manual técnico consolidado.
+A pasta [`Hardware`](Hardware/) contém o projeto do Proteus e o PDF [`Hardware_CPU_Completo.pdf`](Hardware/Hardware_CPU_Completo.pdf), que possui somente as folhas do esquema eletrônico. Esse PDF é útil para consulta direta do circuito e permanece separado do manual técnico consolidado.
 
 ### Imagens das memórias 27C512
 
@@ -613,9 +632,9 @@ O [`Software/Checkup`](Software/Checkup/) é o programa de diagnóstico geral do
 
 - [Manual de Referência Técnica](WALL-8_Manual_de_Referencia_Tecnica_Rev1.1.pdf) — documento consolidado em formato de datasheet;
 - [Referência completa das instruções](Software/wall8_instrucoes.md) — opcodes, bytes, ciclos, flags e exemplos;
-- [Especificação da placa de vídeo](Software/wall8_placa_video.md) — protocolo, registradores, modos e arquitetura da GPU;
+- [Especificação da placa de vídeo](Hardware/wall8_GPU_Hardware.md) — protocolo, registradores, modos e arquitetura da GPU;
 - [Guia do Checkup](Software/Checkup/wall8_checkup_completo_v1_guia.md) — sequência de testes do diagnóstico geral;
-- [Esquema eletrônico completo](Hardware/Hardware_Completo.pdf) — folhas exportadas do Proteus;
+- [Esquema eletrônico completo](Hardware/Hardware_CPU_Completo.pdf) — folhas exportadas do Proteus;
 - [Fluxograma da arquitetura](fluxograma_A4_horizontal.pdf) — visão gráfica em formato A4.
 
 

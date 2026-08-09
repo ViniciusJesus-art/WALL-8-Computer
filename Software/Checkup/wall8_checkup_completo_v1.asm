@@ -15,7 +15,7 @@
 ;   2. Visual test of the 7-segment display and LED enable.
 ;   3. Functional test of the 76-opcode ISA.
 ;   4. TIMER_1MS and TIMER_500MS.
-;   5. Video: text 40x30, graphics 320x240 and 160x120.
+;   5. Video: text 80x30, graphics 320x240 and 160x120.
 ;   6. Keyboard / KEY_READY handshake.
 ;   7. Tone and noise, all eight selections, 500 ms each.
 ;   8. Cartridge detect and two stable checksum passes over 20 KiB.
@@ -81,7 +81,7 @@ VIDEO_CURSOR_END     = $10
 VIDEO_CLEAR          = $00
 CURSOR_HIDE          = $04
 CURSOR_SHOW          = $05
-MODE_TEXT_40X30      = $11
+MODE_TEXT_80X30      = $11
 MODE_GFX_320X240     = $12
 MODE_GFX_160X120     = $13
 VRAM_READ            = $20
@@ -1722,7 +1722,7 @@ VIDEO_TEXT_EVEN:
     STI PATTERN_VALUE, #$2E
 
 VIDEO_TEXT_PATTERN_READY:
-    STI COL_COUNT, #$28
+    STI COL_COUNT, #$50
 
 VIDEO_TEXT_COL:
     LDA PATTERN_VALUE
@@ -1768,7 +1768,7 @@ VIDEO_TEXT_READ0_OK:
 
     ; Read back bottom-right: expected 'X'.
     CALL VIDEO_WAIT
-    STI VIDEO_X, #$27
+    STI VIDEO_X, #$4F
     STI VIDEO_Y, #$1D
     STI VIDEO_CMD, #$20
     CALL VIDEO_WAIT
@@ -2480,7 +2480,7 @@ DELAY_VISIBLE_INNER:
 
 STR_VIDEO_OK:
     #d8 0x0D
-    #d8 0x56, 0x49, 0x44, 0x45, 0x4F, 0x3A, 0x20, 0x54, 0x45, 0x58, 0x54, 0x20, 0x34, 0x30, 0x78, 0x33
+    #d8 0x56, 0x49, 0x44, 0x45, 0x4F, 0x3A, 0x20, 0x54, 0x45, 0x58, 0x54, 0x20, 0x38, 0x30, 0x78, 0x33
     #d8 0x30, 0x20, 0x4F, 0x4B, 0x0D
     #d8 0x56, 0x49, 0x44, 0x45, 0x4F, 0x3A, 0x20, 0x33, 0x32, 0x30, 0x78, 0x32, 0x34, 0x30, 0x20, 0x4F
     #d8 0x4B, 0x0D

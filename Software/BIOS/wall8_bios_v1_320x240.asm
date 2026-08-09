@@ -55,7 +55,7 @@ ASM_META1         = 0x0257
 ; ------------------------------------------------------------
 ; Memória de edição e histórico do terminal
 ; ------------------------------------------------------------
-; LAST_CMD guarda até 38 caracteres do último comando confirmado
+; LAST_CMD guarda até 78 caracteres do último comando confirmado
 ; com Enter. A tecla TAB copia essa linha de volta para CMD_BUFFER,
 ; deixando-a apenas editada na tela; a execução só acontece depois
 ; de um novo Enter.
@@ -63,7 +63,7 @@ LAST_CMD          = 0x0350       ; 79 bytes: 0350h..039Eh
 LAST_LEN          = 0x02A0
 
 ; O histórico pertence ao WALL-8, não ao widget do emulador.
-; A BIOS mantém 128 linhas de 40 caracteres a partir de 4C00h.
+; A BIOS mantém 128 linhas de 80 caracteres a partir de 4C00h.
 ; São 10 KiB reservados, deixando 0400h..4BFFh para programas e 7400h..7FFFh para a pilha.
 HIST_LINE         = 0x02A1       ; linha lógica atual, 0..127
 HIST_COL          = 0x02A2       ; coluna atual, 0..79
@@ -77,7 +77,7 @@ HIST_WORK_LO      = 0x02A9
 HIST_COUNT        = 0x02AA       ; contador temporário de laços
 HIST_ROW          = 0x02AB       ; linha física durante redesenho
 HIST_LAST_CR      = 0x02AC       ; evita contar CR+LF como duas linhas
-HIST_WRAP_PENDING = 0x02AD       ; linha avançou por completar 40 colunas
+HIST_WRAP_PENDING = 0x02AD       ; linha avançou por completar 80 colunas
 OUTPUT_CHAR       = 0x02AE       ; preserva o byte enquanto o histórico trabalha
 VIDEO_BATCH          = 0x02AF       ; 0=saída imediata, 1=lote do comando em RAM
 VIDEO_REDRAW_PENDING = 0x02B0       ; VIEW_TOP mudou e a tela precisa ser redesenhada
@@ -85,9 +85,9 @@ VIDEO_OLD_VIEW_TOP   = 0x02B1       ; valor anterior usado para detectar mudanç
 
 HIST_BASE         = 0x4C00
 HIST_CAPACITY     = 0x0080       ; 128 linhas
-TEXT_WIDTH        = 0x0028       ; 40 caracteres
-TEXT_HEIGHT       = 0x001E       ; 30 linhas = 320x240 com fonte 8x8
-CMD_MAX           = 0x0026       ; 38 + prompt de 2 células = 40 colunas
+TEXT_WIDTH        = 0x0050       ; 80 caracteres
+TEXT_HEIGHT       = 0x001E       ; 30 linhas = 640x240 com fonte 8x8
+CMD_MAX           = 0x004E       ; 78 + prompt de 2 células = 80 colunas
 
 #bank bios
 
@@ -99,8 +99,8 @@ RESET:
     STI $F100, #$00    ; display LOW
     STI $F101, #$00    ; display HIGH
     STI $F300, #$00    ; limpa flags dos timers
-    STI VIDEO_CMD, #$11    ; texto 40x30, fonte 8x8, escala 2x, VGA 640x480
-    STI VIDEO_CMD, #$00    ; limpa os 1.200 bytes da VRAM textual
+    STI VIDEO_CMD, #$11    ; texto 80x30, fonte 8x8, duplicação vertical, VGA 640x480
+    STI VIDEO_CMD, #$00    ; limpa os 2.400 bytes da VRAM textual
     JMP BIOS_MAIN    ; entra na janela fixa antes de liberar RAM
 
 #addr 0x8000
@@ -147,7 +147,7 @@ BIOS_MAIN:
     STI $0241, #$00
     STI LAST_LEN, #$00
 
-    ; Inicializa a tela 40x30 e a área de histórico em RAM.
+    ; Inicializa a tela 80x30 e a área de histórico em RAM.
     ; A partir daqui toda saída passa por PUT_CHAR, que grava a cópia
     ; textual no WALL-8 antes de enviá-la para a placa de vídeo.
     CALL HISTORY_RESET
@@ -190,7 +190,7 @@ GET_KEY_WAIT:
 ;   TAB  (09h): recupera o último comando, sem executá-lo.
 ;   UP   (80h): sobe uma linha no histórico mantido pelo WALL-8.
 ;   DOWN (81h): desce uma linha; no final volta a acompanhar a saída.
-; O buffer aceita 38 caracteres: com o prompt "> " ocupa as 40 colunas.
+; O buffer aceita 78 caracteres: com o prompt "> " ocupa as 80 colunas.
 ; ============================================================
 READ_LINE:
     STI CMD_LEN, #$00
@@ -235,7 +235,7 @@ READ_LINE_STORE_PREPARE:
 
 READ_LINE_STORE_CHECK:
     LDB CMD_LEN
-    CMP B, #$26
+    CMP B, #$4E
     JZ READ_LINE_LOOP
     STA [PTR+]
     CALL PUT_CHAR              ; eco + cópia no histórico do WALL-8
@@ -374,7 +374,7 @@ RECALL_DONE:
     RET
 
 ; ============================================================
-; Texto 40x30 / imagem lógica 320x240 / escala 2x / VGA 640x480
+; Texto 80x30 / fonte 8x8 / duplicação vertical / VGA 640x480
 ; ============================================================
 ; VIDEO_RAW_CHAR é a única rotina que fala diretamente com VIDEO_DATA.
 ; PUT_CHAR fica acima dela e mantém uma cópia do texto em RAM. Durante
@@ -440,7 +440,7 @@ PUT_CHAR:
     CMP A, #$7F
     JC PUT_CHAR_CONTROL
 
-    ; Ao concluir a coluna 39, a GPU incrementa X/Y antes de baixar BUSY.
+    ; Ao concluir a coluna 79, a GPU incrementa X/Y antes de baixar BUSY.
     ; A flag mantém a política de CR/LF da BIOS alinhada com esse avanço.
     STI HIST_WRAP_PENDING, #$00
     LDA OUTPUT_CHAR
@@ -449,7 +449,7 @@ PUT_CHAR:
     LDA HIST_COL
     INC A
     STA HIST_COL
-    CMP A, #$28
+    CMP A, #$50
     JNZ PUT_CHAR_PRINTABLE_OUTPUT
 
     STI HIST_COL, #$00
@@ -475,7 +475,7 @@ PUT_CHAR_BACKSPACE:
     JMP PUT_CHAR_DONE
 
 PUT_CHAR_CR:
-    ; CR executa a quebra. Se a linha acabou exatamente na coluna 39,
+    ; CR executa a quebra. Se a linha acabou exatamente na coluna 79,
     ; o wrap automático já avançou e CR apenas confirma esse avanço.
     STI HIST_LAST_CR, #$01
     LDA HIST_WRAP_PENDING
@@ -549,7 +549,7 @@ PRINT_STRING_BATCH:
 ; Histórico textual mantido pelo próprio WALL-8
 ; ============================================================
 ; Organização da RAM:
-;   4C00h + linha*40 + coluna
+;   4C00h + linha*80 + coluna
 ; São 128 linhas. Quando a capacidade é atingida, a BIOS reinicia o
 ; histórico; isso evita a lógica e o custo de um buffer circular na v3.
 ; ============================================================
@@ -568,7 +568,7 @@ HISTORY_RESET:
     STI VIDEO_OLD_VIEW_TOP, #$00
     CALL HISTORY_CLEAR_VISIBLE
     CALL VIDEO_WAIT
-    STI VIDEO_CMD, #$11          ; garante modo texto 40x30
+    STI VIDEO_CMD, #$11          ; garante modo texto 80x30
     CALL VIDEO_WAIT
     STI VIDEO_CMD, #$00
     CALL VIDEO_WAIT
@@ -620,7 +620,7 @@ HISTORY_PTR_DEC_LOW:
     STA HIST_PTR_LO
     RET
 
-; Limpa os 40 bytes da linha apontada por HIST_PTR, mas restaura o
+; Limpa os 80 bytes da linha apontada por HIST_PTR, mas restaura o
 ; ponteiro ao início. Isso garante que posições ainda não escritas sejam
 ; espaços mesmo em uma SRAM física que ligue com conteúdo indefinido.
 HISTORY_CLEAR_CURRENT_LINE:
@@ -628,7 +628,7 @@ HISTORY_CLEAR_CURRENT_LINE:
     STA HIST_WORK_HI
     LDA HIST_PTR_LO
     STA HIST_WORK_LO
-    STI HIST_COUNT, #$28
+    STI HIST_COUNT, #$50
 HISTORY_CLEAR_LINE_LOOP:
     LDA #$20
     CALL HISTORY_WRITE_RAW
@@ -651,7 +651,7 @@ HISTORY_CLEAR_VISIBLE:
 HISTORY_CLEAR_VISIBLE_LOOP:
     CALL HISTORY_CLEAR_CURRENT_LINE
     LDA HIST_PTR_LO
-    ADD A, #$28
+    ADD A, #$50
     STA HIST_PTR_LO
     JNC HISTORY_CLEAR_VISIBLE_NO_CARRY
     LDA HIST_PTR_HI
@@ -667,10 +667,10 @@ HISTORY_CLEAR_VISIBLE_NO_CARRY:
     STI VIDEO_OLD_VIEW_TOP, #$00
     RET
 
-; Nova linha explícita antes da coluna 40: pula as células restantes
+; Nova linha explícita antes da coluna 80: pula as células restantes
 ; para que o próximo texto comece no início da linha seguinte.
 HISTORY_NEWLINE:
-    LDA #$28
+    LDA #$50
     LDB HIST_COL
     SUB A, B
     STA HIST_COUNT
@@ -749,7 +749,7 @@ HISTORY_BACKSPACE:
     JZ HISTORY_BACKSPACE_DONE
     DEC A
     STA HIST_LINE
-    STI HIST_COL, #$28
+    STI HIST_COL, #$50
     CALL HISTORY_UPDATE_VIEW_LIMIT
 
 HISTORY_BACKSPACE_NORMAL:
@@ -816,7 +816,7 @@ VIEW_TO_BOTTOM:
 VIEW_TO_BOTTOM_DONE:
     RET
 
-; Calcula HIST_BASE + VIEW_TOP*40 por adições sucessivas. A rotina é
+; Calcula HIST_BASE + VIEW_TOP*80 por adições sucessivas. A rotina é
 ; pequena e o custo ocorre apenas quando o usuário pressiona uma seta.
 HISTORY_CALC_VIEW_ADDRESS:
     STI HIST_WORK_HI, #$4C
@@ -828,7 +828,7 @@ HISTORY_CALC_VIEW_LOOP:
     CMP A, #$00
     JZ HISTORY_CALC_VIEW_DONE
     LDA HIST_WORK_LO
-    ADD A, #$28
+    ADD A, #$50
     STA HIST_WORK_LO
     JNC HISTORY_CALC_VIEW_NO_CARRY
     LDA HIST_WORK_HI
@@ -898,7 +898,7 @@ RESTORE_COMMAND_PTR_DONE:
 ; por VIEW_TOP dentro da RAM do WALL-8.
 HISTORY_REDRAW:
     ; O redraw usa somente a RAM de histórico como fonte. VIDEO_X e VIDEO_Y
-    ; são definidos uma única vez; as 1.200 escritas seguintes usam o
+    ; são definidos uma única vez; as 2.400 escritas seguintes usam o
     ; incremento automático da GPU.
     STI VIDEO_REDRAW_PENDING, #$00
     CALL VIDEO_WAIT
@@ -910,7 +910,7 @@ HISTORY_REDRAW:
     STI HIST_ROW, #$00
 
 HISTORY_REDRAW_ROW_LOOP:
-    STI HIST_COUNT, #$28
+    STI HIST_COUNT, #$50
 
 HISTORY_REDRAW_COL_LOOP:
     CALL HISTORY_READ_WORK
@@ -928,7 +928,7 @@ HISTORY_REDRAW_COL_LOOP:
     CMP A, #$1E
     JNZ HISTORY_REDRAW_ROW_LOOP
 
-    ; A última escrita pode ter ativado CURSOR_END em (39,29). Espera sua
+    ; A última escrita pode ter ativado CURSOR_END em (79,29). Espera sua
     ; conclusão antes de reposicionar, pois escritas de X/Y durante BUSY
     ; não são aceitas pela interface.
     CALL VIDEO_WAIT
@@ -3664,7 +3664,7 @@ STR_INFO:
     #d8 0x39, 0x46, 0x46, 0x46, 0x20, 0x7C, 0x20, 0x43, 0x41, 0x52, 0x54, 0x20, 0x24, 0x41, 0x30, 0x30
     #d8 0x30, 0x2D, 0x24, 0x45, 0x46, 0x46, 0x46, 0x2E, 0x0D, 0x0A, 0x56, 0x69, 0x64, 0x65, 0x6F, 0x20
     #d8 0x36, 0x34, 0x30, 0x78, 0x34, 0x38, 0x30, 0x20, 0x34, 0x3A, 0x33, 0x3A, 0x20, 0x74, 0x65, 0x78
-    #d8 0x74, 0x6F, 0x20, 0x38, 0x30, 0x78, 0x36, 0x30, 0x3B, 0x20, 0x6D, 0x6F, 0x6E, 0x6F, 0x20, 0x33
+    #d8 0x74, 0x6F, 0x20, 0x38, 0x30, 0x78, 0x33, 0x30, 0x3B, 0x20, 0x6D, 0x6F, 0x6E, 0x6F, 0x20, 0x33
     #d8 0x32, 0x30, 0x78, 0x32, 0x34, 0x30, 0x3B, 0x20, 0x31, 0x36, 0x20, 0x63, 0x6F, 0x72, 0x65, 0x73
     #d8 0x20, 0x31, 0x36, 0x30, 0x78, 0x31, 0x32, 0x30, 0x2E, 0x0D, 0x0A, 0x46, 0x32, 0x30, 0x30, 0x20
     #d8 0x44, 0x41, 0x54, 0x41, 0x20, 0x7C, 0x20, 0x46, 0x32, 0x30, 0x31, 0x20, 0x43, 0x4D, 0x44, 0x2F

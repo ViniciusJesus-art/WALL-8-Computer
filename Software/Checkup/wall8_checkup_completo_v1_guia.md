@@ -4,8 +4,8 @@
 
 - `wall8_checkup_completo_v1.asm`: fonte para CustomASM.
 - `wall8_checkup_completo_v1.bin`: imagem de 40 KiB (`0xA000` bytes), correspondente ao `#bankdef bios`.
-- SHA-256 do ASM: `9b9b4ca2cb673ceea1ae995f727989c5d4f2878033c0e3d5c21a0b91c8aaa131`
-- SHA-256 do BIN: `ed1eff65d6e25f04f386f92ead6f56a0c8b52eca69a023a365a7721f41ac0f58`
+- SHA-256 do ASM: `a55d278c78d1cb50c75ca123817489fd7339864e2cbb302dd36d61c3b6e16702`
+- SHA-256 do BIN: `c798994594d456c97f0d3b4dc046408fea9928db4f2c5c871ce5ff1196c5bc30`
 
 ## Atenção
 
@@ -26,7 +26,7 @@ Se a CPU continuar depois do `HLT`, ela entra na rotina de falha do opcode `01`.
 2. Display de 7 segmentos e controle `/LED_EN`.
 3. Todos os 76 opcodes.
 4. Timers de 1 ms e 500 ms.
-5. Vídeo texto `40x30`.
+5. Vídeo texto `80x30`, cobrindo 2.400 caracteres e verificando a posição final `(79,29)`.
 6. Vídeo gráfico `320x240`.
 7. Vídeo gráfico `160x120` e animação.
 8. Teclado e limpeza de `KEY_READY`.
@@ -58,7 +58,7 @@ Identificadores dos testes externos:
 | `E2` | RAM `0x0000..0x03FF` |
 | `F1` | Display e LEDs |
 | `F3` | Timers |
-| `11` | Vídeo texto 40x30 |
+| `11` | Vídeo texto 80x30 |
 | `12` | Vídeo 320x240 |
 | `13` | Vídeo 160x120 |
 | `F0` | Teclado |
@@ -75,7 +75,8 @@ O bit `$F300.5` é `/VIDEO_DETECT`:
 - `0`: executa todos os testes de vídeo;
 - `1`: pula vídeo sem marcar falha.
 
-O teste segue a definição detalhada de `VIDEO_STATUS.bit4 = CURSOR_END`.
+O teste segue a definição detalhada de `VIDEO_STATUS.bit4 = CURSOR_END` e
+confere leituras nos extremos `(0,0)` e `(79,29)` da grade textual.
 
 ### Teclado
 

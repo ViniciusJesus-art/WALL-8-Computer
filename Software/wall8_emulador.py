@@ -604,7 +604,9 @@ class VideoDevice:
 
     @property
     def width(self) -> int:
-        return 40 if self.mode != self.MODE_GFX_160 else 20
+        if self.mode == self.MODE_TEXT:
+            return 80
+        return 20 if self.mode == self.MODE_GFX_160 else 40
 
     @property
     def height(self) -> int:
@@ -614,6 +616,8 @@ class VideoDevice:
 
     @property
     def logical_width(self) -> int:
+        if self.mode == self.MODE_TEXT:
+            return 640
         return 160 if self.mode == self.MODE_GFX_160 else 320
 
     @property
@@ -622,18 +626,20 @@ class VideoDevice:
 
     @property
     def bytes_per_line(self) -> int:
+        if self.mode == self.MODE_TEXT:
+            return 80
         return 20 if self.mode == self.MODE_GFX_160 else 40
 
     @property
     def used_size(self) -> int:
-        return {self.MODE_TEXT: 1200, self.MODE_GFX_320: 9600,
+        return {self.MODE_TEXT: 2400, self.MODE_GFX_320: 9600,
                 self.MODE_GFX_160: 2400}[self.mode]
 
     @property
     def cells(self) -> list[list[str]]:
         if self.mode != self.MODE_TEXT:
             return []
-        return [[chr(v) for v in self.vram[y * 40:(y + 1) * 40]]
+        return [[chr(v) for v in self.vram[y * 80:(y + 1) * 80]]
                 for y in range(30)]
 
     def reset(self) -> None:
@@ -687,11 +693,11 @@ class VideoDevice:
                 self.x -= 1
             elif self.y:
                 self.y -= 1
-                self.x = 39
-            self.vram[self.y * 40 + self.x] = 0x20
+                self.x = 79
+            self.vram[self.y * 80 + self.x] = 0x20
             self.dirty = True
         elif value >= 0x20:
-            self.vram[self.y * 40 + self.x] = value
+            self.vram[self.y * 80 + self.x] = value
             self._increment()
             self.dirty = True
 
@@ -703,7 +709,7 @@ class VideoDevice:
 
     def set_geometry(self, width: int, height: int) -> None:
         """Traduz chamadas antigas da GUI para os tres modos oficiais."""
-        mode = {(40, 30): self.MODE_TEXT, (320, 240): self.MODE_GFX_320,
+        mode = {(80, 30): self.MODE_TEXT, (320, 240): self.MODE_GFX_320,
                 (160, 120): self.MODE_GFX_160}.get((width, height))
         if mode is not None and not self.busy:
             self._select_mode(mode)
@@ -1850,11 +1856,11 @@ class Wall8App:
         self.custom_clock_entry.bind("<FocusOut>", self._use_custom_clock)
 
         ttk.Label(toolbar, text="Resolução:").pack(side="left", padx=(14, 4))
-        self.video_resolution_var = tk.StringVar(value="Texto 40×30")
+        self.video_resolution_var = tk.StringVar(value="Texto 80×30")
         video_resolution = ttk.Combobox(
             toolbar,
             textvariable=self.video_resolution_var,
-            values=("Texto 40×30", "GFX 320×240", "GFX 160×120"),
+            values=("Texto 80×30", "GFX 320×240", "GFX 160×120"),
             width=14,
             state="readonly",
         )
@@ -1919,19 +1925,18 @@ class Wall8App:
 
         self.terminal_frame = ttk.LabelFrame(
             left,
-            text="Modo Texto 40×30 — saída física 640×480 — 4:3",
+            text="Modo Texto 80×30 — saída física 640×480 — 4:3",
             padding=6,
         )
         terminal_frame = self.terminal_frame
         terminal_frame.pack(anchor="nw")
 
-        # Fonte raster fixa: cada célula continua sendo sempre 8×8 pixels,
-        # independentemente do tamanho da janela principal.
+        # Fonte raster fixa. Fixedsys ocupa 8 pixels de largura na altura 16,
+        # preservando a matriz horizontal de 8 pixels sem invadir a próxima
+        # célula; a grade física do texto continua sendo 80 x 30 células
+        # de 8 x 16 pixels.
         self.video_font = self.tkfont.Font(
-            # Fonte raster do Windows: no tamanho lógico 8 ela usa uma matriz
-            # 6×8 dentro da célula 8×8, como terminais reais, em vez do glifo
-            # muito estreito do Consolas que parecia inserir espaços.
-            family="Terminal",
+            family="Fixedsys",
             size=-16,
         )
         self.video_pixel_scale = 1
@@ -2422,7 +2427,7 @@ class Wall8App:
         self.root.after(10, self._tick)
 
     VIDEO_MODES = {
-        "Texto 40×30": (320, 240, 40, 30),
+        "Texto 80×30": (640, 240, 80, 30),
         "GFX 320×240": (320, 240, 320, 240),
         "GFX 160×120": (160, 120, 160, 120),
     }
@@ -2470,7 +2475,7 @@ class Wall8App:
             self.root.attributes("-fullscreen", False)
 
     def _fit_window_to_fixed_video(self) -> None:
-        """Garante que os 80×60 caracteres inteiros estejam sempre visíveis."""
+        """Garante que os 80×30 caracteres inteiros estejam sempre visíveis."""
         self.root.update_idletasks()
         if self.root.attributes("-fullscreen"):
             self._update_terminal(force=True)
@@ -2493,7 +2498,7 @@ class Wall8App:
 
     def _update_terminal(self, force: bool = False) -> None:
         command_to_mode = {
-            VideoDevice.MODE_TEXT: "Texto 40×30",
+            VideoDevice.MODE_TEXT: "Texto 80×30",
             VideoDevice.MODE_GFX_320: "GFX 320×240",
             VideoDevice.MODE_GFX_160: "GFX 160×120",
         }
@@ -2538,7 +2543,8 @@ class Wall8App:
             self.bus.video.dirty = False
             return
 
-        cell = 16 * self.video_pixel_scale
+        cell_width = 8 * self.video_pixel_scale
+        cell_height = 16 * self.video_pixel_scale
         first_row_offset = 0
 
         # Cada caractere ocupa uma célula lógica quadrada de 8×8. As posições
@@ -2547,13 +2553,13 @@ class Wall8App:
             # Apenas a primeira linha recebe a folga visual do topo. Deslocar
             # toda a grade faria a última linha ultrapassar a resolução por
             # dois pixels lógicos (por exemplo, 242 em uma tela de 240).
-            y = (row_index + 0.5) * cell
+            y = (row_index + 0.5) * cell_height
             if row_index == 0:
                 y += first_row_offset
             for column_index, char in enumerate(row):
                 if char != " ":
                     canvas.create_text(
-                        (column_index + 0.5) * cell,
+                        (column_index + 0.5) * cell_width,
                         y,
                         text=char,
                         font=self.video_font,
@@ -2562,23 +2568,23 @@ class Wall8App:
                     )
 
         if self.bus.video.cursor_visible:
-            x0 = self.bus.video.x * cell
-            y0 = self.bus.video.y * cell
+            x0 = self.bus.video.x * cell_width
+            y0 = self.bus.video.y * cell_height
             if self.bus.video.y == 0:
                 y0 += first_row_offset
             canvas.create_rectangle(
                 x0,
                 y0,
-                x0 + cell,
-                y0 + cell,
+                x0 + cell_width,
+                y0 + cell_height,
                 fill="#67ff67",
                 outline="",
             )
             char = self.bus.video.cells[self.bus.video.y][self.bus.video.x]
             if char != " ":
                 canvas.create_text(
-                    x0 + cell / 2,
-                    y0 + cell / 2,
+                    x0 + cell_width / 2,
+                    y0 + cell_height / 2,
                     text=char,
                     font=self.video_font,
                     fill="#071007",
@@ -3032,17 +3038,17 @@ def run_self_tests() -> None:
     # CURSOR_END fica retido na ultima posicao: a GPU nao volta para (0,0)
     # em nenhum modo e so libera a condicao quando a CPU reposiciona
     # explicitamente X/Y, troca o modo ou conclui VIDEO_CLEAR.
-    bus.write8(VIDEO_BASE + 2, 39)
+    bus.write8(VIDEO_BASE + 2, 79)
     bus.write8(VIDEO_BASE + 3, 29)
     bus.write8(VIDEO_BASE, ord("Z"))
     bus.video.advance()
-    assert bus.video.vram[1199] == ord("Z")
-    assert (bus.video.x, bus.video.y) == (39, 29)
+    assert bus.video.vram[2399] == ord("Z")
+    assert (bus.video.x, bus.video.y) == (79, 29)
     assert bus.video.read_register(4) & 0x10
     bus.write8(VIDEO_BASE, ord("Y"))
     bus.video.advance()
-    assert bus.video.vram[1199] == ord("Y")
-    assert (bus.video.x, bus.video.y) == (39, 29)
+    assert bus.video.vram[2399] == ord("Y")
+    assert (bus.video.x, bus.video.y) == (79, 29)
     assert bus.video.cursor_end
     bus.write8(VIDEO_BASE + 2, 0)
     assert not bus.video.cursor_end

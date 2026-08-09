@@ -443,7 +443,7 @@ Comandos iniciais de `VIDEO_CMD`:
 | `0x00` | `VIDEO_CLEAR` | Limpa a área utilizada pelo modo atual |
 | `0x04` | `CURSOR_HIDE` | Esconde o cursor no modo texto |
 | `0x05` | `CURSOR_SHOW` | Mostra o cursor no modo texto |
-| `0x11` | `MODE_TEXT_40X30` | Texto 40×30, fonte 8×8 e escala 2× |
+| `0x11` | `MODE_TEXT_80X30` | Texto 80×30, fonte 8×8 e escala 2× apenas na vertical |
 | `0x12` | `MODE_GFX_320X240` | Gráfico 320×240 monocromático, escala 2× |
 | `0x13` | `MODE_GFX_160X120` | Gráfico 160×120 monocromático, escala 4× |
 | `0x20` | `VRAM_READ` | Solicita leitura na posição X/Y |

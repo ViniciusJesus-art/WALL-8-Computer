@@ -16,7 +16,7 @@ A própria placa de vídeo mantém a imagem na VRAM, lê essa memória continuam
 
 A arquitetura inicial possui três modos:
 
-1. texto `40 × 30` com fonte `8 × 8`;
+1. texto `80 × 30` com fonte armazenada em `8 × 8` e duplicação somente vertical;
 2. gráfico `320 × 240` monocromático;
 3. gráfico `160 × 120` monocromático.
 
@@ -28,7 +28,7 @@ Todos os modos são exibidos em uma saída física de `640 × 480`, proporção 
 
 | Comando | Modo | Resolução lógica | Escala para 640 × 480 | Memória utilizada |
 |---:|---|---:|---:|---:|
-| `$11` | Texto | 40 × 30 caracteres | Cada pixel da fonte vira 2 × 2 pixels físicos | 1.200 bytes |
+| `$11` | Texto | 80 × 30 caracteres com fonte 8 × 8 | 1× horizontal e 2× vertical; célula física 8 × 16 | 2.400 bytes |
 | `$12` | Gráfico monocromático | 320 × 240 pixels | Cada pixel vira 2 × 2 pixels físicos | 9.600 bytes |
 | `$13` | Gráfico monocromático | 160 × 120 pixels | Cada pixel vira 4 × 4 pixels físicos | 2.400 bytes |
 
@@ -42,7 +42,7 @@ A placa pode ser dividida em três caminhos principais:
 
 1. **interface da CPU**, formada pelos registradores visíveis em `$F200..$F204`;
 2. **controlador de VRAM**, que decide quando a varredura ou uma operação da CPU utiliza a SRAM;
-3. **gerador de vídeo**, que lê a VRAM, guarda o byte em um registrador temporário e transforma esse byte em pixels.
+3. **gerador de vídeo**, que lê a VRAM e, conforme o modo, transforma o byte gráfico em pixels ou usa o código de caractere para consultar a ROM de fonte.
 
 ```text
                          Barramento do WALL-8
@@ -78,8 +78,8 @@ A placa pode ser dividida em três caminhos principais:
                                  │ byte lido pela varredura
                                  ▼
                    ┌──────────────────────────┐
-                   │ Registro temporário /   │
-                   │ shift register de pixel │
+                   │ Registro temporário do  │
+                   │ byte lido da VRAM       │
                    └────────────┬─────────────┘
                                 │
              ┌──────────────────┴──────────────────┐
@@ -87,19 +87,19 @@ A placa pode ser dividida em três caminhos principais:
              ▼                                     ▼
     ┌──────────────────┐                  ┌──────────────────┐
     │ Caminho de texto │                  │ Caminho gráfico  │
-    │ + ROM de fonte   │                  │ 1 bit por pixel  │
+    │ ROM + shift reg. │                  │ com shift reg.   │
     └─────────┬────────┘                  └─────────┬────────┘
               └──────────────────┬──────────────────┘
                                  ▼
-                      ┌──────────────────────┐
-                      │ Escala 2× ou 4× e   │
-                      │ sincronismo 640×480 │
-                      └──────────────────────┘
+                      ┌────────────────────────────┐
+                      │ Formatação do modo ativo e │
+                      │ sincronismo 640×480        │
+                      └────────────────────────────┘
 ```
 
 Os registradores mapeados em `$F200..$F204` formam a interface entre a CPU e a placa de vídeo. Eles armazenam a posição, o dado e o comando de cada operação até que o controlador de VRAM possa executá-la sem interromper a varredura.
 
-Durante a varredura, cada byte lido da VRAM é carregado em um registrador temporário de pixels. Esse registrador mantém o byte enquanto seus bits são convertidos em pixels físicos. Nesse intervalo, a VRAM pode atender uma operação pendente da CPU.
+Durante a varredura, cada byte lido da VRAM é retido pelo caminho do modo ativo. Nos modos gráficos, ele alimenta diretamente o shift register de pixels. No modo texto, ele é o código usado para endereçar a ROM de fonte; o byte retornado pela ROM é então carregado no shift register. Enquanto os bits são emitidos, a VRAM pode atender uma operação pendente da CPU.
 
 Os principais blocos físicos são:
 
@@ -116,7 +116,8 @@ Os principais blocos físicos são:
 - ROM de caracteres;
 - registrador temporário ou shift register de pixels;
 - contadores horizontal e vertical;
-- circuito de escala 2× e 4×;
+- circuito de escala 2× e 4× para os modos gráficos;
+- duplicação vertical das linhas da fonte no modo texto;
 - lógica do cursor;
 - máquina de estados de arbitragem;
 - gerador de sincronismo do monitor.
@@ -132,10 +133,10 @@ Atualização:                   aproximadamente 60 Hz
 Pixel clock:                   25,175 MHz nominal
 ```
 
-Os modos de texto, gráfico `320 × 240` e gráfico `160 × 120` não alteram o sinal reconhecido pelo monitor. Eles alteram somente a resolução lógica usada internamente pela placa e a quantidade de vezes que cada pixel lógico é repetido.
+Os modos de texto, gráfico `320 × 240` e gráfico `160 × 120` não alteram o sinal reconhecido pelo monitor. Eles alteram somente a interpretação da VRAM e a forma como os dados são expandidos para preencher a área ativa.
 
 ```text
-Modo texto 40 × 30:  imagem lógica de 320 × 240, ampliada 2×
+Modo texto 80 × 30:  fonte 8 × 8 forma 640 × 240 e cada linha é repetida 2× na vertical
 Gráfico 320 × 240:   cada pixel lógico é exibido em um bloco 2 × 2
 Gráfico 160 × 120:   cada pixel lógico é exibido em um bloco 4 × 4
 ```
@@ -370,39 +371,56 @@ V = 4..7    → linha lógica 1
 V = 8..11   → linha lógica 2
 ```
 
-### 4.8. Escala do modo texto 40 × 30
+### 4.8. Escala do modo texto 80 × 30
 
-O modo texto possui `40` colunas e `30` linhas. Cada caractere utiliza uma matriz de fonte de `8 × 8` pixels lógicos:
+O modo texto possui `80` colunas e `30` linhas. Cada caractere continua armazenado na ROM como uma matriz de `8 × 8` pixels:
 
 ```text
-40 × 8 = 320 pixels lógicos horizontais
-30 × 8 = 240 pixels lógicos verticais
+80 × 8 = 640 pixels horizontais
+30 × 8 = 240 linhas lógicas
 ```
 
-A imagem textual completa é, portanto, uma imagem lógica de `320 × 240`, ampliada para `640 × 480` por escala 2×.
-
-Cada caractere ocupa fisicamente:
+Não existe duplicação horizontal no modo texto. Os oito bits de cada linha da fonte ocupam diretamente oito clocks do pixel clock VGA. Para alcançar as `480` linhas físicas, cada linha da fonte é exibida em duas linhas consecutivas do monitor:
 
 ```text
-8 × 2 = 16 pixels de largura
-8 × 2 = 16 pixels de altura
+linha 0 da fonte → linhas físicas 0 e 1 da célula
+linha 1 da fonte → linhas físicas 2 e 3 da célula
+...
+linha 7 da fonte → linhas físicas 14 e 15 da célula
+```
+
+Assim, o caractere permanece armazenado como `8 × 8`, mas ocupa fisicamente uma célula de:
+
+```text
+8 pixels de largura × 16 pixels de altura
 ```
 
 A célula textual visível é obtida por:
 
 ```text
-coluna de texto = H_COUNTER ÷ 16
+coluna de texto = H_COUNTER ÷ 8
 linha de texto  = V_COUNTER ÷ 16
 ```
 
 A posição interna na fonte é obtida por:
 
 ```text
-coluna da fonte = (H_COUNTER ÷ 2) AND 7
+coluna da fonte = H_COUNTER AND 7
 linha da fonte  = (V_COUNTER ÷ 2) AND 7
 ```
 
-O código do caractere é lido da VRAM. Em seguida, a linha correspondente é lida na ROM de fonte. O byte da fonte entra no registrador temporário de pixels e cada bit é repetido duas vezes horizontalmente.
+Em termos dos bits dos contadores:
+
+```text
+H0..H2 → posição horizontal 0..7 dentro do caractere
+H3..H9 → coluna textual 0..79
+
+V0     → seleciona a primeira ou a segunda repetição da mesma linha
+V1..V3 → linha 0..7 da ROM de fonte
+V4..V8 → linha textual 0..29
+```
+
+O código do caractere é lido da VRAM. Em seguida, a ROM fornece os oito pixels da linha correspondente. Esse byte entra no shift register e seus bits são enviados uma única vez na horizontal, um por clock físico. Na linha física seguinte, a mesma linha da fonte é lida novamente.
 
 ### 4.9. Contadores e sinais principais
 
@@ -414,7 +432,7 @@ A geração do sinal utiliza, no mínimo:
 - lógica para gerar `HSYNC` ativo entre `656..751`;
 - lógica para gerar `VSYNC` ativo entre `490..491`;
 - sinal `VIDEO_ACTIVE`;
-- seleção de escala conforme o modo ativo;
+- formatação e seleção de escala conforme o modo ativo;
 - contador ou seletor do bit atual do registrador de pixels.
 
 Fluxo geral:
@@ -555,8 +573,9 @@ A sequência interna é:
 O endereço da SRAM é formado internamente a partir de `VIDEO_X` e `VIDEO_Y`, conforme o modo ativo:
 
 ```text
-Texto e 320×240: endereço = VIDEO_Y × 40 + VIDEO_X
-160×120:          endereço = VIDEO_Y × 20 + VIDEO_X
+Texto 80×30:      endereço = VIDEO_Y × 80 + VIDEO_X
+Gráfico 320×240:  endereço = VIDEO_Y × 40 + VIDEO_X
+Gráfico 160×120:  endereço = VIDEO_Y × 20 + VIDEO_X
 ```
 
 O resultado dessa conversão alimenta as entradas de endereço da SRAM `62256`.
@@ -655,7 +674,7 @@ Cada valor escrito em `VIDEO_CMD` representa uma operação definida pelo protoc
 | `$00` | `VIDEO_CLEAR` | Limpa a área de memória utilizada pelo modo atual |
 | `$04` | `CURSOR_HIDE` | Esconde o cursor do modo texto |
 | `$05` | `CURSOR_SHOW` | Mostra o cursor do modo texto |
-| `$11` | `MODE_TEXT_40X30` | Seleciona texto 40 × 30 com fonte 8 × 8 e escala 2× |
+| `$11` | `MODE_TEXT_80X30` | Seleciona texto 80 × 30 com fonte armazenada em 8 × 8 e duplicação 2× somente na vertical |
 | `$12` | `MODE_GFX_320X240` | Seleciona gráfico 320 × 240 monocromático e escala 2× |
 | `$13` | `MODE_GFX_160X120` | Seleciona gráfico 160 × 120 monocromático e escala 4× |
 | `$20` | `VRAM_READ` | Solicita a leitura da posição indicada por `VIDEO_X` e `VIDEO_Y` |
@@ -696,7 +715,7 @@ CALL VIDEO_WAIT
 O comando de limpeza apaga somente a quantidade de VRAM utilizada pelo modo atual:
 
 ```text
-Texto 40×30:      1.200 bytes preenchidos com $20
+Texto 80×30:      2.400 bytes preenchidos com $20
 Gráfico 320×240:  9.600 bytes preenchidos com $00
 Gráfico 160×120:  2.400 bytes preenchidos com $00
 ```
@@ -747,11 +766,11 @@ VIDEO_STATUS.BUSY = 0
 
 Enquanto `BUSY = 1`, o controlador está usando o valor atual para concluir uma operação.
 
-### Texto 40 × 30
+### Texto 80 × 30
 
 ```text
 VIDEO_X = coluna de caractere
-Faixa válida: 0 até 39
+Faixa válida: 0 até 79
 ```
 
 ### Gráfico 320 × 240
@@ -796,7 +815,7 @@ Assim como `VIDEO_X`, ele deve ser alterado somente com `BUSY = 0`.
 
 Qualquer escrita explícita da CPU em `VIDEO_Y` limpa automaticamente a flag `CURSOR_END`.
 
-### Texto 40 × 30
+### Texto 80 × 30
 
 ```text
 VIDEO_Y = linha de caractere
@@ -823,7 +842,7 @@ Ao concluir uma escrita na última posição válida, o cursor automático não 
 
 | Modo | Última posição válida |
 |---|---:|
-| Texto 40 × 30 | `X = 39`, `Y = 29` |
+| Texto 80 × 30 | `X = 79`, `Y = 29` |
 | Gráfico 320 × 240 | `X = 39`, `Y = 239` |
 | Gráfico 160 × 120 | `X = 19`, `Y = 119` |
 
@@ -857,7 +876,7 @@ A condição de ativação depende do modo:
 
 | Modo | Condição que ativa `CURSOR_END` |
 |---|---|
-| Texto 40 × 30 | Escrita concluída em `X = 39`, `Y = 29` |
+| Texto 80 × 30 | Escrita concluída em `X = 79`, `Y = 29` |
 | Gráfico 320 × 240 | Escrita concluída em `X = 39`, `Y = 239` |
 | Gráfico 160 × 120 | Escrita concluída em `X = 19`, `Y = 119` |
 
@@ -992,7 +1011,7 @@ O bit `FRAME` alterna entre zero e um a cada quadro. Ele fornece uma referência
 
 # Parte II — Modo texto
 
-## 12. Modo texto 40 × 30
+## 12. Modo texto 80 × 30
 
 O modo texto é selecionado por:
 
@@ -1013,27 +1032,27 @@ Essa inicialização evita que uma condição de fim da área do uso anterior pe
 Características:
 
 ```text
-Colunas:            40
+Colunas:            80
 Linhas:             30
-Caracteres na tela: 1.200
-Fonte:              8 × 8 pixels
-Escala:             2× horizontal e 2× vertical
-Área lógica:        320 × 240 pixels
+Caracteres na tela: 2.400
+Fonte armazenada:   8 × 8 pixels
+Escala:             1× horizontal e 2× vertical
+Área lógica gerada: 640 × 240 pixels
 Saída física:       640 × 480 pixels
 ```
 
-Cada célula lógica possui `8 × 8` pixels da fonte. Na saída física, cada pixel da fonte vira um bloco de `2 × 2` pixels.
+Cada célula utiliza os `8 × 8` pixels armazenados na fonte sem repetição horizontal. Cada linha da fonte é repetida em duas linhas físicas consecutivas.
 
 Assim, cada caractere ocupa fisicamente:
 
 ```text
-16 × 16 pixels
+8 × 16 pixels
 ```
 
 Cálculo:
 
 ```text
-40 × 16 = 640 pixels horizontais
+80 × 8  = 640 pixels horizontais
 30 × 16 = 480 pixels verticais
 ```
 
@@ -1045,19 +1064,19 @@ Cada posição utiliza um byte contendo o código do caractere.
 
 ```text
 1 caractere = 1 byte
-40 × 30 = 1.200 bytes
+80 × 30 = 2.400 bytes
 ```
 
 Faixa utilizada:
 
 ```text
-VRAM $0000 até $04AF
+VRAM $0000 até $095F
 ```
 
 O endereço de uma célula é:
 
 ```text
-endereço = VIDEO_Y × 40 + VIDEO_X
+endereço = VIDEO_Y × 80 + VIDEO_X
 ```
 
 Exemplo:
@@ -1066,17 +1085,17 @@ Exemplo:
 coluna = 5
 linha  = 3
 
-endereço = 3 × 40 + 5
-endereço = 125 decimal
-endereço = $007D
+endereço = 3 × 80 + 5
+endereço = 245 decimal
+endereço = $00F5
 ```
 
 Organização:
 
 ```text
-VRAM $0000..$0027 → linha 0
-VRAM $0028..$004F → linha 1
-VRAM $0050..$0077 → linha 2
+VRAM $0000..$004F → linha 0
+VRAM $0050..$009F → linha 1
+VRAM $00A0..$00EF → linha 2
 ...
 ```
 
@@ -1152,20 +1171,20 @@ Para cada posição visível, a placa realiza:
 3. calcula a linha interna da fonte;
 4. lê um byte na ROM de caracteres;
 5. seleciona cada bit desse byte;
-6. amplia cada pixel em 2×2;
+6. envia os oito pixels sem repetição horizontal e repete a mesma linha da fonte na próxima linha física;
 7. envia o resultado à saída física.
 
 Para um pixel físico `(PX, PY)`:
 
 ```text
-coluna_texto = PX >> 4
+coluna_texto = PX >> 3
 linha_texto  = PY >> 4
 
-pixel_fonte_x = (PX >> 1) AND 7
+pixel_fonte_x = PX AND 7
 pixel_fonte_y = (PY >> 1) AND 7
 ```
 
-O deslocamento de quatro bits divide por 16, que é o tamanho físico de cada célula.
+O deslocamento horizontal de três bits divide por oito. O deslocamento vertical de quatro bits divide por 16, pois cada linha da fonte é repetida duas vezes.
 
 ---
 
@@ -1177,9 +1196,11 @@ Ao escrever um caractere imprimível em `VIDEO_DATA`:
 2. `BUSY` passa para um;
 3. a GPU grava o código na posição indicada por `VIDEO_X` e `VIDEO_Y` no próximo slot livre;
 4. `VIDEO_X` é incrementado;
-5. ao passar da coluna 39, `VIDEO_X` volta a zero e `VIDEO_Y` é incrementado;
-6. se a escrita ocorreu em `X = 39` e `Y = 29`, a posição permanece em `39,29` e `CURSOR_END` passa para um;
+5. ao passar da coluna 79, `VIDEO_X` volta a zero e `VIDEO_Y` é incrementado;
+6. se a escrita ocorreu em `X = 79` e `Y = 29`, a posição permanece em `79,29` e `CURSOR_END` passa para um;
 7. `BUSY` volta para zero.
+
+Uma linha textual completa exige 80 escritas, uma para cada código de caractere. A CPU não escreve os oito pixels da fonte nem a repetição vertical; essas duas tarefas pertencem ao circuito de vídeo.
 
 A escrita oficial deve respeitar `BUSY`. Uma rotina genérica é:
 
@@ -1217,15 +1238,15 @@ CALL VIDEO_WRITE_A
 O avanço automático no modo texto segue exatamente esta lógica:
 
 ```text
-Se X < 39:
+Se X < 79:
     X = X + 1
 
-Se X = 39 e Y < 29:
+Se X = 79 e Y < 29:
     X = 0
     Y = Y + 1
 
-Se X = 39 e Y = 29:
-    X permanece 39
+Se X = 79 e Y = 29:
+    X permanece 79
     Y permanece 29
     CURSOR_END = 1
 ```
@@ -1810,9 +1831,13 @@ Esse modo oferece uma janela ainda maior para operações da CPU.
 
 ### Modo texto
 
-A VRAM fornece um código de caractere a cada célula horizontal. Uma célula ocupa 16 pixels físicos, portanto a leitura do código também ocorre aproximadamente uma vez a cada 16 clocks de pixel.
+A VRAM fornece um código de caractere a cada célula horizontal. Uma célula ocupa oito pixels físicos de largura, portanto a leitura do código ocorre aproximadamente uma vez a cada oito clocks de pixel:
 
-A linha do desenho do caractere vem de uma ROM de fonte separada. A leitura dessa EPROM não ocupa a VRAM.
+```text
+8 × 39,7 ns ≈ 318 ns
+```
+
+A linha do desenho do caractere vem de uma ROM de fonte separada. A leitura dessa EPROM não ocupa a VRAM. O byte da fonte é carregado no shift register e seus oito bits são emitidos em oito clocks consecutivos. A repetição ocorre somente no eixo vertical: a mesma linha da fonte é utilizada novamente na próxima linha física.
 
 ### Velocidade da SRAM
 
@@ -2051,7 +2076,7 @@ Uma futura dupla página de framebuffer pode eliminar esse problema, mas não é
 No modo texto:
 
 ```text
-endereço da VRAM = linha_de_texto × 40 + coluna_de_texto
+endereço da VRAM = linha_de_texto × 80 + coluna_de_texto
 ```
 
 O byte lido é o código do caractere.
@@ -2092,24 +2117,28 @@ Cada bit permanece na saída por quatro clocks físicos e cada linha lógica é 
 
 ## 38. Geração sequencial sem multiplicador
 
-A GPU não precisa possuir um multiplicador para calcular `Y × 40` ou `Y × 20` durante cada pixel.
+A GPU não precisa possuir um multiplicador para calcular `Y × 80`, `Y × 40` ou `Y × 20` durante cada pixel.
 
-Durante a exibição, ela pode manter um contador de endereço sequencial:
+Durante a exibição, ela pode manter um endereço-base para a linha lógica e um contador sequencial dentro dessa linha:
 
 ```text
-início do quadro → endereço $0000
-próximo byte     → endereço + 1
-fim da linha     → continua na próxima linha
-fim do quadro    → volta para $0000
+início do quadro                  → endereço-base $0000
+próximo byte da mesma linha       → endereço + 1
+nova linha física, mesma lógica   → recarrega o endereço-base atual
+primeira linha física da próxima
+linha lógica                      → endereço-base + bytes por linha
+fim do quadro                     → endereço-base $0000
 ```
 
 Os limites mudam conforme o modo:
 
 ```text
-Texto:      40 bytes por linha e 30 linhas
+Texto:      80 bytes por linha e 30 linhas
 320×240:    40 bytes por linha e 240 linhas
 160×120:    20 bytes por linha e 120 linhas
 ```
+
+No texto, cada linha de 80 códigos é relida durante as 16 linhas físicas que formam uma linha textual. O endereço-base da próxima linha textual somente avança em 80 bytes quando `V_COUNTER` passa para a próxima célula vertical. Dentro da célula, `V0` faz cada linha da fonte durar duas linhas físicas e `V1..V3` selecionam uma das oito linhas armazenadas.
 
 Isso reduz muito a complexidade do hardware discreto.
 
@@ -2366,7 +2395,7 @@ Os bits superiores da EPROM podem permanecer fixos ou ser reservados para bancos
 
 | Modo | X mínimo | X máximo | Y mínimo | Y máximo | Bytes por linha |
 |---|---:|---:|---:|---:|---:|
-| Texto 40 × 30 | 0 | 39 | 0 | 29 | 40 |
+| Texto 80 × 30 | 0 | 79 | 0 | 29 | 80 |
 | Gráfico 320 × 240 | 0 | 39 | 0 | 239 | 40 |
 | Gráfico 160 × 120 | 0 | 19 | 0 | 119 | 20 |
 
@@ -2390,7 +2419,7 @@ $F204  VIDEO_STATUS  estado da interface e da varredura
 $00  limpar tela do modo atual
 $04  esconder cursor
 $05  mostrar cursor
-$11  texto 40 × 30
+$11  texto 80 × 30, fonte 8 × 8 e duplicação vertical
 $12  gráfico 320 × 240 monocromático
 $13  gráfico 160 × 120 monocromático
 $20  solicitar leitura de VRAM em X/Y
@@ -2437,7 +2466,7 @@ X/Y incrementam e BUSY desce
 A primeira versão deve implementar:
 
 - saída física 640 × 480;
-- modo texto 40 × 30;
+- modo texto 80 × 30;
 - fonte fixa 8 × 8;
 - 256 códigos de caractere;
 - cursor visível ou oculto;
@@ -2489,7 +2518,7 @@ VIDEO_DATA, VIDEO_CMD, VIDEO_X, VIDEO_Y e VIDEO_STATUS
 
 `VIDEO_X`, `VIDEO_Y` e `VIDEO_DATA` também formam o buffer mínimo de uma operação de escrita. A CPU prepara X e Y e, ao escrever em DATA, dispara a transação. `BUSY` sobe para avisar que esses valores estão reservados. A máquina de estados espera a varredura carregar o próximo byte no registrador temporário, utiliza a janela livre para gravar na VRAM, incrementa a posição e só então limpa `BUSY`.
 
-A GPU não precisa ler a SRAM a cada pixel físico. No modo 320 × 240, um byte alimenta 16 pixels físicos; no modo 160 × 120, alimenta 32. Essa reutilização do byte cria tempo suficiente para intercalar acessos da CPU com uma SRAM de porta única, desde que o orçamento de temporização seja verificado no hardware final.
+A GPU não precisa ler a SRAM a cada pixel físico. No modo texto, um código de caractere é lido a cada oito pixels físicos e a ROM de fonte fornece o byte efetivamente deslocado. No modo 320 × 240, um byte gráfico alimenta 16 pixels físicos; no modo 160 × 120, alimenta 32. Essa reutilização do byte cria tempo suficiente para intercalar acessos da CPU com uma SRAM de porta única, desde que o orçamento de temporização seja verificado no hardware final.
 
 O modo texto prioriza terminal, BIOS e aventuras em texto. O modo gráfico `320 × 240` oferece maior definição, enquanto o modo `160 × 120` reduz significativamente o trabalho da CPU e é especialmente adequado para jogos simples.
 
