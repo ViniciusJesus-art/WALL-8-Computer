@@ -1,0 +1,364 @@
+#ruledef
+{
+    ; =========================
+    ; Sistema / controle
+    ; =========================
+
+    NOP => 0x00
+    HLT => 0x01
+
+
+    ; =========================
+    ; Loads imediatos
+    ; =========================
+    ;
+    ; LDA #$05 -> A = 05
+    ; LDB #$03 -> B = 03
+
+    LDA #{value: u8} => 0x10 @ value
+    LDB #{value: u8} => 0x11 @ value
+
+
+    ; =========================
+    ; Loads absolutos da memória
+    ; =========================
+    ;
+    ; LDA $1234 -> A = MEM[$1234]
+    ; LDB $1234 -> B = MEM[$1234]
+
+    LDA {addr: u16} => 0x12 @ addr[7:0] @ addr[15:8]
+    LDB {addr: u16} => 0x13 @ addr[7:0] @ addr[15:8]
+
+
+    ; =========================
+    ; Stores absolutos na memória
+    ; =========================
+    ;
+    ; STA $1234 -> MEM[$1234] = A
+    ; STB $1234 -> MEM[$1234] = B
+
+    STA {addr: u16} => 0x14 @ addr[7:0] @ addr[15:8]
+    STB {addr: u16} => 0x15 @ addr[7:0] @ addr[15:8]
+    STI {addr: u16}, #{value: u8} => 0x27 @ addr[7:0] @ addr[15:8] @ value
+
+    ; =========================
+    ; MOV entre registradores
+    ; =========================
+    ;
+    ; MOV A, B -> A = B
+    ; MOV B, A -> B = A
+
+    MOV A, B => 0x16
+    MOV B, A => 0x17
+
+
+    ; =========================
+    ; Loads indiretos via PTR
+    ; =========================
+    ;
+    ; LDA [PTR] -> A = MEM[PTR]
+    ; LDB [PTR] -> B = MEM[PTR]
+
+    LDA [PTR] => 0x18
+    LDB [PTR] => 0x19
+
+
+    ; =========================
+    ; Stores indiretos via PTR
+    ; =========================
+    ;
+    ; STA [PTR] -> MEM[PTR] = A
+    ; STB [PTR] -> MEM[PTR] = B
+
+    STA [PTR] => 0x1A
+    STB [PTR] => 0x1B
+
+
+
+    ; =========================
+    ; Acesso indireto via PTR com pós-incremento
+    ; =========================
+    ;
+    ; LDA [PTR+] -> A = MEM[PTR], depois PTR = PTR + 1
+    ; LDB [PTR+] -> B = MEM[PTR], depois PTR = PTR + 1
+    ;
+    ; STA [PTR+] -> MEM[PTR] = A, depois PTR = PTR + 1
+    ; STB [PTR+] -> MEM[PTR] = B, depois PTR = PTR + 1
+
+    LDA [PTR+] => 0x23
+    LDB [PTR+] => 0x24
+
+    STA [PTR+] => 0x25
+    STB [PTR+] => 0x26
+
+
+
+
+
+
+    ; =========================
+    ; Ponteiro PTR
+    ; =========================
+    ;
+    ; PTR $1234 -> PTR = $1234
+    ; INC PTR      -> PTR = PTR + 1
+    ; DEC PTR      -> PTR = PTR - 1
+
+    PTR {addr: u16} => 0x20 @ addr[7:0] @ addr[15:8]
+    INC PTR => 0x21
+    DEC PTR => 0x22
+
+
+    ; =========================
+    ; Aritmética
+    ; =========================
+    ;
+    ; ADD A, B -> A = A + B
+    ; ADD B, A -> B = B + A
+    ; SUB A, B -> A = A - B
+    ; SUB B, A -> B = B - A
+
+    ADD A, B => 0x30
+    ADD B, A => 0x31
+
+    SUB A, B => 0x32
+    SUB B, A => 0x33
+
+
+    ; =========================
+    ; Lógica
+    ; =========================
+    ;
+    ; AND A, B -> A = A AND B
+    ; AND B, A -> B = B AND A
+    ;
+    ; OR A, B  -> A = A OR B
+    ; OR B, A  -> B = B OR A
+    ;
+    ; XOR A, B -> A = A XOR B
+    ; XOR B, A -> B = B XOR A
+
+    AND A, B => 0x34
+    AND B, A => 0x35
+
+    OR  A, B => 0x36
+    OR  B, A => 0x37
+
+    XOR A, B => 0x38
+    XOR B, A => 0x39
+
+
+    ; =========================
+    ; NOT
+    ; =========================
+    ;
+    ; NOT A -> A = NOT A
+    ; NOT B -> B = NOT B
+
+    NOT A => 0x3A
+    NOT B => 0x3B
+
+
+    ; =========================
+    ; Shift
+    ; =========================
+    ;
+    ; SHL A -> A = A << 1
+    ; SHR A -> A = A >> 1
+    ; SHL B -> B = B << 1
+    ; SHR B -> B = B >> 1
+
+    SHL A => 0x3C
+    SHR A => 0x3D
+
+    SHL B => 0x3E
+    SHR B => 0x3F
+
+
+    ; =========================
+    ; Comparação
+    ; =========================
+    ;
+    ; CMP A, B -> flags = A - B
+    ; CMP B, A -> flags = B - A
+
+    CMP A, B => 0x40
+    CMP B, A => 0x41
+
+
+    ; =========================
+    ; Incremento / decremento
+    ; =========================
+    ;
+    ; INC A -> A = A + 1
+    ; DEC A -> A = A - 1
+    ; INC B -> B = B + 1
+    ; DEC B -> B = B - 1
+
+    INC A => 0x42
+    DEC A => 0x43
+
+    INC B => 0x44
+    DEC B => 0x45
+
+
+    ; =========================
+    ; Zero / clear
+    ; =========================
+    ;
+    ; CLR A -> A = 00
+    ; CLR B -> B = 00
+
+    CLR A => 0x46
+    CLR B => 0x47
+
+
+
+
+    ; =========================
+    ; ALU com valor imediato
+    ; =========================
+    ;
+    ; O TMP preserva o outro registrador enquanto o valor imediato
+    ; é carregado temporariamente em A ou B para entrar na ALU.
+    ; Ao terminar, o registrador preservado é restaurado pelo TMP.
+    ;
+    ; Exemplos:
+    ; ADD A, #$05 -> A = A + $05, B permanece inalterado
+    ; SUB B, #$02 -> B = B - $02, A permanece inalterado
+
+    ADD A, #{value: u8} => 0x60 @ value
+    ADD B, #{value: u8} => 0x61 @ value
+
+    SUB A, #{value: u8} => 0x62 @ value
+    SUB B, #{value: u8} => 0x63 @ value
+
+    AND A, #{value: u8} => 0x64 @ value
+    AND B, #{value: u8} => 0x65 @ value
+
+    OR  A, #{value: u8} => 0x66 @ value
+    OR  B, #{value: u8} => 0x67 @ value
+
+    XOR A, #{value: u8} => 0x68 @ value
+    XOR B, #{value: u8} => 0x69 @ value
+
+
+    ; =========================
+    ; Comparação imediata
+    ; =========================
+    ;
+    ; Apenas atualiza as flags. A e B permanecem inalterados.
+
+    CMP A, #{value: u8} => 0x6A @ value
+    CMP B, #{value: u8} => 0x6B @ value
+
+
+    ; =========================
+    ; TEST imediato
+    ; =========================
+    ;
+    ; TEST faz um AND apenas para atualizar as flags, sem alterar
+    ; o registrador. É útil para testar máscaras de bits.
+    ;
+    ; TEST A, #$10 -> Z=0 quando o bit 4 de A estiver ligado
+
+    TEST A, #{value: u8} => 0x6C @ value
+    TEST B, #{value: u8} => 0x6D @ value
+
+
+    ; =========================
+    ; Jumps absolutos
+    ; =========================
+    ;
+    ; JMP $1234 -> PC = $1234
+    ; JZ  $1234 -> pula se Z = 1
+    ; JNZ $1234 -> pula se Z = 0
+
+    JMP {addr: u16} => 0x50 @ addr[7:0] @ addr[15:8]
+    JZ  {addr: u16} => 0x51 @ addr[7:0] @ addr[15:8]
+    JNZ {addr: u16} => 0x52 @ addr[7:0] @ addr[15:8]
+
+
+    ; =========================
+    ; Jumps por outras flags
+    ; =========================
+    ;
+    ; JC  -> pula se Carry = 1
+    ; JNC -> pula se Carry = 0
+    ; JN  -> pula se Negative = 1
+    ; JP  -> pula se Negative = 0
+    ; JV  -> pula se Overflow = 1
+    ; JNV -> pula se Overflow = 0
+
+    JC  {addr: u16} => 0x53 @ addr[7:0] @ addr[15:8]
+    JNC {addr: u16} => 0x54 @ addr[7:0] @ addr[15:8]
+
+    JN  {addr: u16} => 0x55 @ addr[7:0] @ addr[15:8]
+    JP  {addr: u16} => 0x56 @ addr[7:0] @ addr[15:8]
+
+    JV  {addr: u16} => 0x57 @ addr[7:0] @ addr[15:8]
+    JNV {addr: u16} => 0x58 @ addr[7:0] @ addr[15:8]
+
+
+    ; =========================
+    ; Stack Pointer
+    ; =========================
+    ;
+    ; SP $7FFF -> SP = $7FFF
+    ;
+    ; Normalmente usado no início da BIOS/programa:
+    ; SP $7FFF
+
+    SP {addr: u16} => 0x5F @ addr[7:0] @ addr[15:8]
+
+
+    ; =========================
+    ; Subrotinas
+    ; =========================
+    ;
+    ; CALL $1234 -> salva o endereço de retorno na pilha e pula para $1234
+    ; RET        -> retorna para o endereço salvo pelo CALL
+    ;
+    ; Exemplo:
+    ;
+    ; CALL MINHA_FUNCAO
+    ; HLT
+    ;
+    ; MINHA_FUNCAO:
+    ;     INC A
+    ;     RET
+
+    CALL {addr: u16} => 0x59 @ addr[7:0] @ addr[15:8]
+    RET => 0x5A
+
+
+    ; =========================
+    ; Pilha / Stack
+    ; =========================
+    ;
+    ; PUSH A -> empilha A
+    ; PUSH B -> empilha B
+    ;
+    ; POP A  -> desempilha para A
+    ; POP B  -> desempilha para B
+    ;
+    ; Regra usada:
+    ;
+    ; PUSH:
+    ;   SP = SP - 1
+    ;   MEM[SP] = valor
+    ;
+    ; POP:
+    ;   valor = MEM[SP]
+    ;   SP = SP + 1
+
+    PUSH A => 0x5B
+    PUSH B => 0x5C
+
+    POP A => 0x5D
+    POP B => 0x5E
+
+
+
+
+}
