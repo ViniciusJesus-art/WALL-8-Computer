@@ -7,8 +7,8 @@
 }
 
 ; ============================================================
-; WALL-8 BIOS / Monitor v4.0
-; Terminal interativo, mini assembler e histórico controlado pela própria BIOS.
+; WALL-8 BIOS / Monitor v4.1
+; Terminal interativo, contexto de registradores e histórico controlado pela BIOS.
 ; A janela fixa da BIOS ocupa somente 0x8000..0x9FFF (8 KiB).
 ; O pequeno stub em 0x0000 roda apenas durante o boot overlay.
 ; ============================================================
@@ -40,17 +40,13 @@ PRINT_VALUE      = 0x0249
 TEMP0            = 0x024A
 TEMP1            = 0x024B
 TEMP2            = 0x024C
-ASM_ADDR_HI       = 0x024D
-ASM_ADDR_LO       = 0x024E
-ASM_LEN           = 0x024F
-ASM_B0            = 0x0250
-ASM_B1            = 0x0251
-ASM_B2            = 0x0252
-ASM_B3            = 0x0253
-ASM_REG1          = 0x0254
-ASM_REG2          = 0x0255
-ASM_META0         = 0x0256
-ASM_META1         = 0x0257
+MON_A             = 0x024D       ; A carregado antes de RUN/GO/CARD
+MON_B             = 0x024E       ; B carregado antes de RUN/GO/CARD
+MON_PTR_HI        = 0x024F       ; PTR do contexto de execucao
+MON_PTR_LO        = 0x0250
+MON_SP_HI         = 0x0251       ; SP do contexto de execucao
+MON_SP_LO         = 0x0252
+RUN_KIND          = 0x0253       ; 0=RUN comum, 1=CARD
 
 ; ------------------------------------------------------------
 ; Memória de edição e histórico do terminal
@@ -86,7 +82,7 @@ VIDEO_OLD_VIEW_TOP   = 0x02B1       ; valor anterior usado para detectar mudanç
 HIST_BASE         = 0x4C00
 HIST_CAPACITY     = 0x0080       ; 128 linhas
 TEXT_WIDTH        = 0x0050       ; 80 caracteres
-TEXT_HEIGHT       = 0x001E       ; 30 linhas = 640x240 com fonte 8x8
+TEXT_HEIGHT       = 0x001E       ; 30 linhas = 640x480 com duplicacao vertical
 CMD_MAX           = 0x004E       ; 78 + prompt de 2 células = 80 colunas
 
 #bank bios
@@ -107,22 +103,13 @@ RESET:
 BIOS_MAIN:
     STI $F500, #$71    ; bit0=1: libera RAM; demais bits = configuração inicial
 
-    ; Trampolins em RAM para acesso/chamada por endereco variavel.
+    ; Trampolins em RAM para acesso por endereco variavel.
     ; 0100: STA $xxxx / RET
-    ; 0104: CALL $xxxx / RET
-    ; 0108: JMP $xxxx
     ; 010B: LDA $xxxx / RET
     STI $0100, #$14
     STI $0101, #$00
     STI $0102, #$00
     STI $0103, #$5A
-    STI $0104, #$59
-    STI $0105, #$00
-    STI $0106, #$00
-    STI $0107, #$5A
-    STI $0108, #$50
-    STI $0109, #$00
-    STI $010A, #$00
     STI $010B, #$12
     STI $010C, #$00
     STI $010D, #$00
@@ -140,9 +127,31 @@ BIOS_MAIN:
     STI $0116, #$00
     STI $0117, #$5A
 
-    ; O mini assembler inicia em $0400.
-    STI $024D, #$04
-    STI $024E, #$00
+    ; Trampolim de execucao em RAM. Ele carrega o contexto do monitor,
+    ; chama ou salta para o programa e restaura a pilha da BIOS no retorno.
+    ; 0120: LDA #aa / LDB #bb / PTR $pppp / SP $ssss
+    ; 012A: CALL ou JMP $xxxx
+    ; 012D: SP $7FFF / JMP RUN_CONTEXT_RETURN
+    STI $0120, #$10
+    STI $0122, #$11
+    STI $0124, #$20
+    STI $0127, #$5F
+    STI $012A, #$59
+    STI $012D, #$5F
+    STI $012E, #$FF
+    STI $012F, #$7F
+    STI $0130, #$50
+    STI $0131, #RUN_CONTEXT_RETURN[7:0]
+    STI $0132, #RUN_CONTEXT_RETURN[15:8]
+
+    ; Contexto inicial usado por RUN, GO e CARD.
+    STI MON_A, #$00
+    STI MON_B, #$00
+    STI MON_PTR_HI, #$04
+    STI MON_PTR_LO, #$00
+    STI MON_SP_HI, #$7F
+    STI MON_SP_LO, #$FF
+    STI RUN_KIND, #$00
     STI $0240, #$00
     STI $0241, #$00
     STI LAST_LEN, #$00
@@ -162,6 +171,7 @@ SHELL_LOOP:
     CALL READ_LINE
     CALL DISPATCH
 
+SHELL_COMMAND_DONE:
     ; O resultado completo do comando e o próximo prompt já estão no
     ; histórico. A VRAM é redesenhada uma única vez antes de voltar
     ; a esperar a próxima linha digitada.
@@ -270,6 +280,12 @@ READ_LINE_DONE_PREPARE:
 READ_LINE_DONE:
     LDA #$00
     STA [PTR]
+    ; Segundo terminador: o despachante consome o primeiro byte 00 ao
+    ; reconhecer um comando sem argumentos. Assim o parser seguinte ainda
+    ; encontra fim de linha, nunca lixo deixado por um comando anterior.
+    INC PTR
+    STA [PTR]
+    DEC PTR
 
     ; A partir do Enter, a quebra da linha, toda a saída do comando e o
     ; próximo prompt são acumulados somente no histórico. O laço principal
@@ -958,9 +974,10 @@ HISTORY_REDRAW_CURSOR_HIDDEN:
 ; ============================================================
 ; Conversão e formatação de números
 ; ============================================================
-; PARSE_U8 aceita decimal, $HEX e 0xHEX. PARSE_HEX16 recebe endereços
-; de quatro dígitos. As rotinas usam PARSE_OK para não depender das flags
-; depois de chamadas auxiliares.
+; PARSE_U8 usa hexadecimal por padrao: 50, $50 e 0x50 valem 50h.
+; O prefixo # seleciona decimal: #50 vale 32h. PARSE_HEX16 recebe
+; enderecos de quatro digitos. As rotinas usam PARSE_OK para nao
+; depender das flags depois de chamadas auxiliares.
 ; ============================================================
 SKIP_SPACES:
 SKIP_SPACES_LOOP:
@@ -980,23 +997,28 @@ PARSE_U8:
     LDA [PTR]
     CMP A, #$00
     JZ PARSE_U8_FAIL
+    CMP A, #$23
+    JZ PARSE_U8_DEC_PREFIX
     CMP A, #$24
     JZ PARSE_U8_HEX_PREFIX
     CMP A, #$30
-    JNZ PARSE_U8_DEC_LOOP
+    JNZ PARSE_U8_HEX_LOOP
     INC PTR
     LDA [PTR]
     CMP A, #$58
     JZ PARSE_U8_0X
     LDA #$01
     STA $0244
-    JMP PARSE_U8_DEC_LOOP
+    JMP PARSE_U8_HEX_LOOP
 PARSE_U8_0X:
     INC PTR
     JMP PARSE_U8_HEX_LOOP
 PARSE_U8_HEX_PREFIX:
     INC PTR
     JMP PARSE_U8_HEX_LOOP
+PARSE_U8_DEC_PREFIX:
+    INC PTR
+    JMP PARSE_U8_DEC_LOOP
 PARSE_U8_DEC_LOOP:
     LDA [PTR]
     CMP A, #$00
@@ -1168,12 +1190,26 @@ PARSE_HEX16_FAIL:
     STI $0241, #$00
     RET
 
+; Confirma que, depois do ultimo argumento, restam somente espacos.
+; Mantem a politica do monitor deterministica e rejeita texto excedente.
+PARSE_REQUIRE_END:
+    CALL SKIP_SPACES
+    LDA [PTR]
+    CMP A, #$00
+    JZ PARSE_REQUIRE_END_OK
+    STI PARSE_OK, #$00
+    RET
+PARSE_REQUIRE_END_OK:
+    STI PARSE_OK, #$01
+    RET
+
 PARSE_ONE_U8:
     CALL PARSE_U8
     LDB $0241
     CMP B, #$01
     JNZ PARSE_ONE_DONE
     STA $0245
+    CALL PARSE_REQUIRE_END
 PARSE_ONE_DONE:
     RET
 PARSE_TWO_U8:
@@ -1187,6 +1223,7 @@ PARSE_TWO_U8:
     CMP B, #$01
     JNZ PARSE_TWO_DONE
     STA $0246
+    CALL PARSE_REQUIRE_END
 PARSE_TWO_DONE:
     RET
 
@@ -1261,14 +1298,16 @@ PRINT_DEC_ONES:
     RET
 
 PRINT_RESULT:
-    STA $024C
+    ; ARG1 e exclusivo da operacao neste ponto. TEMP2 nao pode guardar o
+    ; resultado porque PUT_CHAR/HISTORY_POKE o usa para cada caractere.
+    STA ARG1
     PTR STR_RESULT_PREFIX
     CALL PRINT_STRING
-    LDA $024C
+    LDA ARG1
     CALL PRINT_U8_DEC
     PTR STR_RESULT_HEX
     CALL PRINT_STRING
-    LDA $024C
+    LDA ARG1
     CALL PRINT_HEX8
     PTR STR_RESULT_END
     CALL PRINT_STRING
@@ -1287,6 +1326,8 @@ DISPATCH:
     JMP TRIE_ROOT
 TRIE_ROOT:
     LDA [PTR+]
+    CMP A, #$00
+    JZ CMD_EMPTY
     CMP A, #$41
     JZ TRIE_ROOT_A
     CMP A, #$43
@@ -1320,28 +1361,10 @@ TRIE_ROOT:
     JMP CMD_UNKNOWN
 TRIE_ROOT_A:
     LDA [PTR+]
-    CMP A, #$00
-    JZ CMD_ASM_START
-    CMP A, #$20
-    JZ CMD_ASM
     CMP A, #$44
     JZ TRIE_ROOT_A_D
     CMP A, #$4E
     JZ TRIE_ROOT_A_N
-    CMP A, #$53
-    JZ TRIE_ROOT_A_S
-    JMP CMD_UNKNOWN
-TRIE_ROOT_A_S:
-    LDA [PTR+]
-    CMP A, #$4D
-    JZ TRIE_ROOT_A_S_M
-    JMP CMD_UNKNOWN
-TRIE_ROOT_A_S_M:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ CMD_ASM_START
-    CMP A, #$20
-    JZ CMD_ASM
     JMP CMD_UNKNOWN
 TRIE_ROOT_A_D:
     LDA [PTR+]
@@ -1642,6 +1665,15 @@ TRIE_ROOT_R_E:
     JZ TRIE_ROOT_R_E_A
     CMP A, #$42
     JZ TRIE_ROOT_R_E_B
+    CMP A, #$47
+    JZ TRIE_ROOT_R_E_G
+    JMP CMD_UNKNOWN
+TRIE_ROOT_R_E_G:
+    LDA [PTR+]
+    CMP A, #$00
+    JZ CMD_REG
+    CMP A, #$20
+    JZ CMD_REG
     JMP CMD_UNKNOWN
 TRIE_ROOT_R_E_A:
     LDA [PTR+]
@@ -1872,7 +1904,11 @@ TRIE_ROOT_X_O_R:
     JMP CMD_UNKNOWN
 
 CMD_UNKNOWN:
-    JMP CMD_TRY_ASM
+    PTR STR_UNKNOWN
+    CALL PRINT_STRING
+    RET
+CMD_EMPTY:
+    RET
 CMD_SYNTAX:
     PTR STR_SYNTAX
     CALL PRINT_STRING
@@ -1886,9 +1922,9 @@ CMD_ADD:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_TWO_U8
     LDA $0241
     CMP A, #$01
@@ -1902,9 +1938,9 @@ CMD_SUB:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_TWO_U8
     LDA $0241
     CMP A, #$01
@@ -1918,9 +1954,9 @@ CMD_AND:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_TWO_U8
     LDA $0241
     CMP A, #$01
@@ -1934,9 +1970,9 @@ CMD_OR:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_TWO_U8
     LDA $0241
     CMP A, #$01
@@ -1950,9 +1986,9 @@ CMD_XOR:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_TWO_U8
     LDA $0241
     CMP A, #$01
@@ -1966,9 +2002,9 @@ CMD_NOT:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_ONE_U8
     LDA $0241
     CMP A, #$01
@@ -1981,9 +2017,9 @@ CMD_SHL:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_ONE_U8
     LDA $0241
     CMP A, #$01
@@ -1996,9 +2032,9 @@ CMD_SHR:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_ONE_U8
     LDA $0241
     CMP A, #$01
@@ -2011,11 +2047,11 @@ CMD_INC:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$50
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_ONE_U8
     LDA $0241
     CMP A, #$01
@@ -2028,11 +2064,11 @@ CMD_DEC:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$50
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_ONE_U8
     LDA $0241
     CMP A, #$01
@@ -2045,9 +2081,9 @@ CMD_CMP:
     CALL SKIP_SPACES
     LDA [PTR]
     CMP A, #$41
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CMP A, #$42
-    JZ CMD_TRY_ASM
+    JZ CMD_SYNTAX
     CALL PARSE_TWO_U8
     LDA $0241
     CMP A, #$01
@@ -2099,15 +2135,14 @@ CMD_DIV:
     CMP A, #$00
     JZ CMD_DIV_ZERO
     STI $024A, #$00
-    LDA $0245
-    STA $024C
+    ; ARG1 vira o resto. TEMP2 seria corrompido ao imprimir Q= e R=.
 CMD_DIV_LOOP:
-    LDA $024C
+    LDA ARG1
     LDB $0246
     CMP A, B
     JNC CMD_DIV_DONE
     SUB A, B
-    STA $024C
+    STA ARG1
     LDA $024A
     INC A
     STA $024A
@@ -2119,7 +2154,7 @@ CMD_DIV_DONE:
     CALL PRINT_U8_DEC
     PTR STR_DIV_R
     CALL PRINT_STRING
-    LDA $024C
+    LDA ARG1
     CALL PRINT_U8_DEC
     CALL PRINT_NEWLINE
     RET
@@ -2210,10 +2245,26 @@ STATUS_VIDEO_DONE:
     RET
 CMD_TIMER:
     CALL SKIP_SPACES
-    LDA [PTR]
+    LDA [PTR+]
     CMP A, #$00
     JZ CMD_STATUS
     CMP A, #$43
+    JNZ CMD_SYNTAX
+    LDA [PTR+]
+    CMP A, #$4C
+    JNZ CMD_SYNTAX
+    LDA [PTR+]
+    CMP A, #$45
+    JNZ CMD_SYNTAX
+    LDA [PTR+]
+    CMP A, #$41
+    JNZ CMD_SYNTAX
+    LDA [PTR+]
+    CMP A, #$52
+    JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
+    CMP A, #$01
     JNZ CMD_SYNTAX
     STI $F300, #$00
     PTR STR_TIMER_CLEARED
@@ -2237,6 +2288,10 @@ CMD_DISP:
     LDA $0241
     CMP A, #$01
     JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
     LDA $0248
     STA $F100
     LDA $0247
@@ -2249,9 +2304,161 @@ CMD_DISP:
     CALL PRINT_HEX8
     CALL PRINT_NEWLINE
     RET
+
+; REG mostra ou altera o contexto entregue a RUN, GO e CARD.
+; Formas: REG | REG A [u8] | REG B [u8] | REG PTR [$hhhh] | REG SP [$hhhh]
+CMD_REG:
+    CALL SKIP_SPACES
+    LDA [PTR+]
+    CMP A, #$00
+    JZ REG_PRINT_ALL
+    CMP A, #$41
+    JZ REG_SELECT_A
+    CMP A, #$42
+    JZ REG_SELECT_B
+    CMP A, #$50
+    JZ REG_SELECT_PTR_P
+    CMP A, #$53
+    JZ REG_SELECT_SP_S
+    JMP CMD_SYNTAX
+
+REG_SELECT_A:
+    LDA [PTR]
+    CMP A, #$00
+    JZ REG_PRINT_A
+    CMP A, #$20
+    JNZ CMD_SYNTAX
+    CALL PARSE_ONE_U8
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    LDA ARG1
+    STA MON_A
+    JMP REG_PRINT_A
+
+REG_SELECT_B:
+    LDA [PTR]
+    CMP A, #$00
+    JZ REG_PRINT_B
+    CMP A, #$20
+    JNZ CMD_SYNTAX
+    CALL PARSE_ONE_U8
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    LDA ARG1
+    STA MON_B
+    JMP REG_PRINT_B
+
+REG_SELECT_PTR_P:
+    LDA [PTR+]
+    CMP A, #$54
+    JNZ CMD_SYNTAX
+    LDA [PTR+]
+    CMP A, #$52
+    JNZ CMD_SYNTAX
+    LDA [PTR]
+    CMP A, #$00
+    JZ REG_PRINT_PTR
+    CMP A, #$20
+    JNZ CMD_SYNTAX
+    CALL PARSE_HEX16
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    LDA ADDR_HI
+    STA MON_PTR_HI
+    LDA ADDR_LO
+    STA MON_PTR_LO
+    JMP REG_PRINT_PTR
+
+REG_SELECT_SP_S:
+    LDA [PTR+]
+    CMP A, #$50
+    JNZ CMD_SYNTAX
+    LDA [PTR]
+    CMP A, #$00
+    JZ REG_PRINT_SP
+    CMP A, #$20
+    JNZ CMD_SYNTAX
+    CALL PARSE_HEX16
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    LDA ADDR_HI
+    STA MON_SP_HI
+    LDA ADDR_LO
+    STA MON_SP_LO
+    JMP REG_PRINT_SP
+
+REG_PRINT_ALL:
+    CALL REG_PRINT_A_INLINE
+    CALL REG_PRINT_B_INLINE
+    CALL REG_PRINT_PTR_INLINE
+    CALL REG_PRINT_SP_INLINE
+    CALL PRINT_NEWLINE
+    RET
+REG_PRINT_A:
+    CALL REG_PRINT_A_INLINE
+    CALL PRINT_NEWLINE
+    RET
+REG_PRINT_B:
+    CALL REG_PRINT_B_INLINE
+    CALL PRINT_NEWLINE
+    RET
+REG_PRINT_PTR:
+    CALL REG_PRINT_PTR_INLINE
+    CALL PRINT_NEWLINE
+    RET
+REG_PRINT_SP:
+    CALL REG_PRINT_SP_INLINE
+    CALL PRINT_NEWLINE
+    RET
+
+REG_PRINT_A_INLINE:
+    PTR STR_REG_A
+    CALL PRINT_STRING
+    LDA MON_A
+    CALL PRINT_HEX8
+    RET
+REG_PRINT_B_INLINE:
+    PTR STR_REG_B
+    CALL PRINT_STRING
+    LDA MON_B
+    CALL PRINT_HEX8
+    RET
+REG_PRINT_PTR_INLINE:
+    PTR STR_REG_PTR
+    CALL PRINT_STRING
+    LDA MON_PTR_HI
+    CALL PRINT_HEX8
+    LDA MON_PTR_LO
+    CALL PRINT_HEX8
+    RET
+REG_PRINT_SP_INLINE:
+    PTR STR_REG_SP
+    CALL PRINT_STRING
+    LDA MON_SP_HI
+    CALL PRINT_HEX8
+    LDA MON_SP_LO
+    CALL PRINT_HEX8
+    RET
+
 CMD_READ:
     CALL PARSE_HEX16
     LDA $0241
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
     CMP A, #$01
     JNZ CMD_SYNTAX
     CALL DYN_READ
@@ -2283,6 +2490,11 @@ CMD_WRITE:
     CMP B, #$01
     JNZ CMD_SYNTAX
     STA $0245
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    LDA ARG1
     CALL DYN_WRITE
     PTR STR_WRITE_OPEN
     CALL PRINT_STRING
@@ -2298,6 +2510,10 @@ CMD_WRITE:
     RET
 
 CMD_CARD:
+    CALL SKIP_SPACES
+    LDA [PTR]
+    CMP A, #$00
+    JNZ CMD_SYNTAX
     JMP RUN_CARD_IMPL
 CMD_RUN:
     CALL SKIP_SPACES
@@ -2306,6 +2522,10 @@ CMD_RUN:
     JZ CMD_RUN_CARD_TEXT
     CALL PARSE_HEX16
     LDA $0241
+    CMP A, #$01
+    JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
     CMP A, #$01
     JNZ CMD_SYNTAX
     PTR STR_RUN_ADDR
@@ -2319,22 +2539,9 @@ CMD_RUN:
     ; Antes de entregar o controle ao programa, torna visível toda a saída
     ; pendente e deixa VIDEO_BATCH desligado para programas interativos.
     CALL VIDEO_BATCH_FLUSH
-    CALL DYN_CALL
-
-    ; O texto de retorno volta a integrar o lote do shell.
-    STI VIDEO_BATCH, #$01
-    STA $0256
-    STB $0257
-    PTR STR_RUN_RETURN
-    CALL PRINT_STRING
-    LDA $0256
-    CALL PRINT_HEX8
-    PTR STR_RUN_B
-    CALL PRINT_STRING
-    LDA $0257
-    CALL PRINT_HEX8
-    CALL PRINT_NEWLINE
-    RET
+    STI RUN_KIND, #$00
+    STI $012A, #$59              ; CALL destino e retorna ao monitor
+    JMP DYN_LAUNCH
 CMD_RUN_CARD_TEXT:
     LDA [PTR+]
     CMP A, #$43
@@ -2359,6 +2566,10 @@ CMD_GO:
     LDA $0241
     CMP A, #$01
     JNZ CMD_SYNTAX
+    CALL PARSE_REQUIRE_END
+    LDA PARSE_OK
+    CMP A, #$01
+    JNZ CMD_SYNTAX
     PTR STR_GO_ADDR
     CALL PRINT_STRING
     LDA $0247
@@ -2369,7 +2580,8 @@ CMD_GO:
     ; GO não retorna ao shell, portanto precisa tornar a mensagem visível
     ; antes de transferir definitivamente o controle.
     CALL VIDEO_BATCH_FLUSH
-    JMP DYN_GO
+    STI $012A, #$50              ; JMP destino, sem retorno
+    JMP DYN_LAUNCH
 
 RUN_CARD_IMPL:
     LDA $F300
@@ -2380,21 +2592,19 @@ RUN_CARD_IMPL:
 
     ; O cartucho pode ser interativo. Sincroniza a tela e libera a saída
     ; imediata enquanto o código externo estiver executando.
+    STI ADDR_HI, #$A0
+    STI ADDR_LO, #$00
+    STI RUN_KIND, #$01
     CALL VIDEO_BATCH_FLUSH
-    CALL $A000
-    STI VIDEO_BATCH, #$01
-
-    PTR STR_CARD_RETURN
-    CALL PRINT_STRING
-    RET
+    STI $012A, #$59
+    JMP DYN_LAUNCH
 RUN_CARD_NONE:
     PTR STR_NO_CARD
     CALL PRINT_STRING
     RET
 
 ; ============================================================
-; Escrita/leitura dinamica em RAM e chamada por endereco.
-; Os trampolins 0x0100..0x010E sao montados no boot.
+; Escrita/leitura dinamica e transferencia com contexto de registradores.
 ; ============================================================
 
 DYN_WRITE:
@@ -2415,1152 +2625,49 @@ DYN_READ:
     CALL $010B
     RET
 
-DYN_CALL:
-    LDA $0248
-    STA $0105
-    LDA $0247
-    STA $0106
-    CALL $0104
-    RET
+DYN_LAUNCH:
+    LDA MON_A
+    STA $0121
+    LDA MON_B
+    STA $0123
+    LDA MON_PTR_LO
+    STA $0125
+    LDA MON_PTR_HI
+    STA $0126
+    LDA MON_SP_LO
+    STA $0128
+    LDA MON_SP_HI
+    STA $0129
+    LDA ADDR_LO
+    STA $012B
+    LDA ADDR_HI
+    STA $012C
+    JMP $0120
 
-DYN_GO:
-    LDA $0248
-    STA $0109
-    LDA $0247
-    STA $010A
-    JMP $0108
-
-PRINT_HEX16_ADDR:
-    LDA $0247
-    CALL PRINT_HEX8
-    LDA $0248
-    CALL PRINT_HEX8
-    RET
-
-; ============================================================
-; Mini assembler interativo
-; ============================================================
-; Cada linha é convertida diretamente em opcode e operandos na RAM.
-; O endereço corrente fica em ASM_ADDR_HI:ASM_ADDR_LO. RUN chama o bloco
-; e exige RET; GO transfere o controle sem preparar retorno.
-; ASM $0400 entra no modo; linha vazia sai.
-; ============================================================
-
-CMD_ASM:
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$00
-    JZ CMD_ASM_START
-    CALL PARSE_HEX16
-    LDA $0241
+; O programa chamado retornou por RET. A e B passam a ser o novo contexto.
+; PTR e SP permanecem com os valores configurados porque a ISA nao permite
+; ler esses registradores de volta para a BIOS.
+RUN_CONTEXT_RETURN:
+    STA MON_A
+    STB MON_B
+    STI VIDEO_BATCH, #$01
+    LDA RUN_KIND
     CMP A, #$01
-    JNZ CMD_SYNTAX
-    LDA $0247
-    STA $024D
-    LDA $0248
-    STA $024E
-CMD_ASM_START:
-    PTR STR_ASM_ENTER
+    JZ RUN_CONTEXT_CARD_RETURN
+    PTR STR_RUN_RETURN
     CALL PRINT_STRING
-ASM_MODE_LOOP:
-    LDA $024D
-    STA $0247
-    LDA $024E
-    STA $0248
-    CALL PRINT_HEX16_ADDR
-    PTR STR_ASM_PROMPT
+    LDA MON_A
+    CALL PRINT_HEX8
+    PTR STR_RUN_B
     CALL PRINT_STRING
-
-    ; Exibe de uma vez o resultado da linha anterior e o novo prompt.
-    ; Depois do flush, a digitação volta a aparecer imediatamente.
-    CALL VIDEO_BATCH_FLUSH
-    CALL READ_LINE
-    LDA $0240
-    CMP A, #$00
-    JZ ASM_MODE_EXIT
-    PTR CMD_BUFFER
-    CALL SKIP_SPACES
-    CALL ASM_PARSE_LINE
-    JMP ASM_MODE_LOOP
-ASM_MODE_EXIT:
-    PTR STR_ASM_EXIT
-    CALL PRINT_STRING
-    RET
-
-CMD_TRY_ASM:
-    PTR CMD_BUFFER
-    CALL SKIP_SPACES
-    CALL ASM_PARSE_LINE
-    LDA $0241
-    CMP A, #$01
-    JNZ CMD_TRY_ASM_DONE
-    PTR STR_ASM_INLINE_OK
-    CALL PRINT_STRING
-    LDA $024D
-    STA $0247
-    LDA $024E
-    STA $0248
-    CALL PRINT_HEX16_ADDR
+    LDA MON_B
+    CALL PRINT_HEX8
     CALL PRINT_NEWLINE
-CMD_TRY_ASM_DONE:
-    RET
-
-ASM_PARSE_LINE:
-    JMP ASM_TRIE_ROOT
-
-ASM_BAD:
-    STI $0241, #$00
-    PTR STR_ASM_ERROR
+    JMP SHELL_COMMAND_DONE
+RUN_CONTEXT_CARD_RETURN:
+    PTR STR_CARD_RETURN
     CALL PRINT_STRING
-    RET
-
-ASM_EXPECT_END:
-    STI $0241, #$00
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$00
-    JNZ ASM_EXPECT_END_FAIL
-    STI $0241, #$01
-ASM_EXPECT_END_FAIL:
-    RET
-
-ASM_PARSE_REG:
-    STI $0241, #$00
-    CALL SKIP_SPACES
-    LDA [PTR+]
-    CMP A, #$41
-    JZ ASM_REG_A
-    CMP A, #$42
-    JZ ASM_REG_B
-    RET
-ASM_REG_A:
-    STI $0254, #$00
-    STI $0241, #$01
-    RET
-ASM_REG_B:
-    STI $0254, #$01
-    STI $0241, #$01
-    RET
-
-ASM_EXPECT_COMMA:
-    STI $0241, #$00
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$2C
-    JNZ ASM_EXPECT_COMMA_FAIL
-    INC PTR
-    STI $0241, #$01
-ASM_EXPECT_COMMA_FAIL:
-    RET
-
-ASM_PARSE_HASH_U8:
-    STI $0241, #$00
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$23
-    JNZ ASM_HASH_FAIL
-    INC PTR
-    CALL PARSE_U8
-ASM_HASH_FAIL:
-    RET
-
-ASM_PARSE_PTR_FORM:
-    ; Retorna PARSE_OK=1. TEMP0=0 para [PTR], 1 para [PTR+].
-    STI $0241, #$00
-    STI $024A, #$00
-    CALL SKIP_SPACES
-    LDA [PTR+]
-    CMP A, #$5B
-    JNZ ASM_PTR_FORM_FAIL
-    LDA [PTR+]
-    CMP A, #$50
-    JNZ ASM_PTR_FORM_FAIL
-    LDA [PTR+]
-    CMP A, #$54
-    JNZ ASM_PTR_FORM_FAIL
-    LDA [PTR+]
-    CMP A, #$52
-    JNZ ASM_PTR_FORM_FAIL
-    LDA [PTR]
-    CMP A, #$2B
-    JNZ ASM_PTR_FORM_CLOSE
-    INC PTR
-    STI $024A, #$01
-ASM_PTR_FORM_CLOSE:
-    LDA [PTR+]
-    CMP A, #$5D
-    JNZ ASM_PTR_FORM_FAIL
-    STI $0241, #$01
-ASM_PTR_FORM_FAIL:
-    RET
-
-ASM_EMIT_A:
-    STA $024C
-    LDA $024D
-    STA $0247
-    LDA $024E
-    STA $0248
-    LDA $024C
-    CALL DYN_WRITE
-    LDA $024E
-    INC A
-    STA $024E
-    JNZ ASM_EMIT_DONE
-    LDA $024D
-    INC A
-    STA $024D
-ASM_EMIT_DONE:
-    RET
-
-ASM_COMMIT:
-    CALL ASM_EXPECT_END
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0250
-    CALL ASM_EMIT_A
-    LDA $024F
-    CMP A, #$01
-    JZ ASM_COMMIT_DONE
-    LDA $0251
-    CALL ASM_EMIT_A
-    LDA $024F
-    CMP A, #$02
-    JZ ASM_COMMIT_DONE
-    LDA $0252
-    CALL ASM_EMIT_A
-    LDA $024F
-    CMP A, #$03
-    JZ ASM_COMMIT_DONE
-    LDA $0253
-    CALL ASM_EMIT_A
-ASM_COMMIT_DONE:
-    STI $0241, #$01
-    RET
-
-ASM_ONE:
-    STA $0250
-    STI $024F, #$01
-    JMP ASM_COMMIT
-
-ASM_ADDR_OP:
-    STA $0250
-    CALL PARSE_HEX16
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0248
-    STA $0251
-    LDA $0247
-    STA $0252
-    STI $024F, #$03
-    JMP ASM_COMMIT
-
-ASM_ONE_REG_AB:
-    STA $0256
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0256
-    LDB $0254
-    ADD A, B
-    JMP ASM_ONE
-
-ASM_ONE_REG_STEP2:
-    STA $0256
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0254
-    SHL A
-    LDB $0256
-    ADD A, B
-    JMP ASM_ONE
-
-ASM_BINARY:
-    ; ASM_META0 = opcode registrador base; ASM_META1 = opcode imediato base.
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0254
-    STA $0255
-    CALL ASM_EXPECT_COMMA
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$23
-    JZ ASM_BINARY_IMM
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0255
-    CMP A, #$00
-    JZ ASM_BINARY_FIRST_A
-    LDA $0254
-    CMP A, #$00
-    JNZ ASM_BAD
-    LDA $0256
-    ADD A, #$01
-    JMP ASM_ONE
-ASM_BINARY_FIRST_A:
-    LDA $0254
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0256
-    JMP ASM_ONE
-ASM_BINARY_IMM:
-    CALL ASM_PARSE_HASH_U8
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0242
-    STA $0251
-    LDA $0257
-    LDB $0255
-    ADD A, B
-    STA $0250
-    STI $024F, #$02
-    JMP ASM_COMMIT
-
-ASM_LOAD:
-    ; TEMP0 = 0 para A, 1 para B.
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$23
-    JZ ASM_LOAD_IMM
-    CMP A, #$5B
-    JZ ASM_LOAD_PTR
-    LDA #$12
-    LDB $0256
-    ADD A, B
-    STA $0250
-    CALL PARSE_HEX16
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0248
-    STA $0251
-    LDA $0247
-    STA $0252
-    STI $024F, #$03
-    JMP ASM_COMMIT
-ASM_LOAD_IMM:
-    CALL ASM_PARSE_HASH_U8
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0242
-    STA $0251
-    LDA #$10
-    LDB $0256
-    ADD A, B
-    STA $0250
-    STI $024F, #$02
-    JMP ASM_COMMIT
-ASM_LOAD_PTR:
-    CALL ASM_PARSE_PTR_FORM
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $024A
-    CMP A, #$00
-    JNZ ASM_LOAD_PTR_INC
-    LDA #$18
-    LDB $0256
-    ADD A, B
-    JMP ASM_ONE
-ASM_LOAD_PTR_INC:
-    LDA #$23
-    LDB $0256
-    ADD A, B
-    JMP ASM_ONE
-
-ASM_STORE:
-    ; TEMP0 = 0 para A, 1 para B.
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$5B
-    JZ ASM_STORE_PTR
-    LDA #$14
-    LDB $0256
-    ADD A, B
-    STA $0250
-    CALL PARSE_HEX16
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0248
-    STA $0251
-    LDA $0247
-    STA $0252
-    STI $024F, #$03
-    JMP ASM_COMMIT
-ASM_STORE_PTR:
-    CALL ASM_PARSE_PTR_FORM
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $024A
-    CMP A, #$00
-    JNZ ASM_STORE_PTR_INC
-    LDA #$1A
-    LDB $0256
-    ADD A, B
-    JMP ASM_ONE
-ASM_STORE_PTR_INC:
-    LDA #$25
-    LDB $0256
-    ADD A, B
-    JMP ASM_ONE
-
-ASM_NOP:
-    DEC PTR
-    LDA #$00
-    JMP ASM_ONE
-ASM_HLT:
-    DEC PTR
-    LDA #$01
-    JMP ASM_ONE
-ASM_RET:
-    DEC PTR
-    LDA #$5A
-    JMP ASM_ONE
-
-ASM_LDA:
-    STI $0256, #$00
-    JMP ASM_LOAD
-ASM_LDB:
-    STI $0256, #$01
-    JMP ASM_LOAD
-ASM_STA:
-    STI $0256, #$00
-    JMP ASM_STORE
-ASM_STB:
-    STI $0256, #$01
-    JMP ASM_STORE
-
-ASM_STI:
-    STI $0250, #$27
-    CALL PARSE_HEX16
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0248
-    STA $0251
-    LDA $0247
-    STA $0252
-    CALL ASM_EXPECT_COMMA
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    CALL ASM_PARSE_HASH_U8
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0242
-    STA $0253
-    STI $024F, #$04
-    JMP ASM_COMMIT
-
-ASM_MOV:
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0254
-    STA $0255
-    CALL ASM_EXPECT_COMMA
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0255
-    CMP A, #$00
-    JZ ASM_MOV_A
-    LDA $0254
-    CMP A, #$00
-    JNZ ASM_BAD
-    LDA #$17
-    JMP ASM_ONE
-ASM_MOV_A:
-    LDA $0254
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA #$16
-    JMP ASM_ONE
-
-ASM_ADD:
-    STI $0256, #$30
-    STI $0257, #$60
-    JMP ASM_BINARY
-ASM_SUB:
-    STI $0256, #$32
-    STI $0257, #$62
-    JMP ASM_BINARY
-ASM_AND:
-    STI $0256, #$34
-    STI $0257, #$64
-    JMP ASM_BINARY
-ASM_OR:
-    STI $0256, #$36
-    STI $0257, #$66
-    JMP ASM_BINARY
-ASM_XOR:
-    STI $0256, #$38
-    STI $0257, #$68
-    JMP ASM_BINARY
-ASM_CMP:
-    STI $0256, #$40
-    STI $0257, #$6A
-    JMP ASM_BINARY
-
-ASM_TEST:
-    CALL ASM_PARSE_REG
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0254
-    STA $0255
-    CALL ASM_EXPECT_COMMA
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    CALL ASM_PARSE_HASH_U8
-    LDA $0241
-    CMP A, #$01
-    JNZ ASM_BAD
-    LDA $0242
-    STA $0251
-    LDA #$6C
-    LDB $0255
-    ADD A, B
-    STA $0250
-    STI $024F, #$02
-    JMP ASM_COMMIT
-
-ASM_NOT:
-    LDA #$3A
-    JMP ASM_ONE_REG_AB
-ASM_SHL:
-    LDA #$3C
-    JMP ASM_ONE_REG_STEP2
-ASM_SHR:
-    LDA #$3D
-    JMP ASM_ONE_REG_STEP2
-ASM_CLR:
-    LDA #$46
-    JMP ASM_ONE_REG_AB
-ASM_PUSH:
-    LDA #$5B
-    JMP ASM_ONE_REG_AB
-ASM_POP:
-    LDA #$5D
-    JMP ASM_ONE_REG_AB
-
-ASM_INC:
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$50
-    JZ ASM_INC_PTR
-    LDA #$42
-    JMP ASM_ONE_REG_STEP2
-ASM_INC_PTR:
-    INC PTR
-    LDA [PTR+]
-    CMP A, #$54
-    JNZ ASM_BAD
-    LDA [PTR+]
-    CMP A, #$52
-    JNZ ASM_BAD
-    LDA #$21
-    JMP ASM_ONE
-
-ASM_DEC:
-    CALL SKIP_SPACES
-    LDA [PTR]
-    CMP A, #$50
-    JZ ASM_DEC_PTR
-    LDA #$43
-    JMP ASM_ONE_REG_STEP2
-ASM_DEC_PTR:
-    INC PTR
-    LDA [PTR+]
-    CMP A, #$54
-    JNZ ASM_BAD
-    LDA [PTR+]
-    CMP A, #$52
-    JNZ ASM_BAD
-    LDA #$22
-    JMP ASM_ONE
-
-ASM_PTR:
-    LDA #$20
-    JMP ASM_ADDR_OP
-ASM_SP:
-    LDA #$5F
-    JMP ASM_ADDR_OP
-ASM_JMP:
-    LDA #$50
-    JMP ASM_ADDR_OP
-ASM_JZ:
-    LDA #$51
-    JMP ASM_ADDR_OP
-ASM_JNZ:
-    LDA #$52
-    JMP ASM_ADDR_OP
-ASM_JC:
-    LDA #$53
-    JMP ASM_ADDR_OP
-ASM_JNC:
-    LDA #$54
-    JMP ASM_ADDR_OP
-ASM_JN:
-    LDA #$55
-    JMP ASM_ADDR_OP
-ASM_JP:
-    LDA #$56
-    JMP ASM_ADDR_OP
-ASM_JV:
-    LDA #$57
-    JMP ASM_ADDR_OP
-ASM_JNV:
-    LDA #$58
-    JMP ASM_ADDR_OP
-ASM_CALL:
-    LDA #$59
-    JMP ASM_ADDR_OP
-
-ASM_TRIE_ROOT:
-    LDA [PTR+]
-    CMP A, #$41
-    JZ ASM_TRIE_A
-    CMP A, #$43
-    JZ ASM_TRIE_C
-    CMP A, #$44
-    JZ ASM_TRIE_D
-    CMP A, #$48
-    JZ ASM_TRIE_H
-    CMP A, #$49
-    JZ ASM_TRIE_I
-    CMP A, #$4A
-    JZ ASM_TRIE_J
-    CMP A, #$4C
-    JZ ASM_TRIE_L
-    CMP A, #$4D
-    JZ ASM_TRIE_M
-    CMP A, #$4E
-    JZ ASM_TRIE_N
-    CMP A, #$4F
-    JZ ASM_TRIE_O
-    CMP A, #$50
-    JZ ASM_TRIE_P
-    CMP A, #$52
-    JZ ASM_TRIE_R
-    CMP A, #$53
-    JZ ASM_TRIE_S
-    CMP A, #$54
-    JZ ASM_TRIE_T
-    CMP A, #$58
-    JZ ASM_TRIE_X
-    JMP ASM_BAD
-ASM_TRIE_A:
-    LDA [PTR+]
-    CMP A, #$44
-    JZ ASM_TRIE_AD
-    CMP A, #$4E
-    JZ ASM_TRIE_AN
-    JMP ASM_BAD
-ASM_TRIE_AD:
-    LDA [PTR+]
-    CMP A, #$44
-    JZ ASM_TRIE_ADD
-    JMP ASM_BAD
-ASM_TRIE_ADD:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_ADD
-    CMP A, #$20
-    JZ ASM_ADD
-    JMP ASM_BAD
-ASM_TRIE_AN:
-    LDA [PTR+]
-    CMP A, #$44
-    JZ ASM_TRIE_AND
-    JMP ASM_BAD
-ASM_TRIE_AND:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_AND
-    CMP A, #$20
-    JZ ASM_AND
-    JMP ASM_BAD
-ASM_TRIE_C:
-    LDA [PTR+]
-    CMP A, #$41
-    JZ ASM_TRIE_CA
-    CMP A, #$4C
-    JZ ASM_TRIE_CL
-    CMP A, #$4D
-    JZ ASM_TRIE_CM
-    JMP ASM_BAD
-ASM_TRIE_CA:
-    LDA [PTR+]
-    CMP A, #$4C
-    JZ ASM_TRIE_CAL
-    JMP ASM_BAD
-ASM_TRIE_CAL:
-    LDA [PTR+]
-    CMP A, #$4C
-    JZ ASM_TRIE_CALL
-    JMP ASM_BAD
-ASM_TRIE_CALL:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_CALL
-    CMP A, #$20
-    JZ ASM_CALL
-    JMP ASM_BAD
-ASM_TRIE_CL:
-    LDA [PTR+]
-    CMP A, #$52
-    JZ ASM_TRIE_CLR
-    JMP ASM_BAD
-ASM_TRIE_CLR:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_CLR
-    CMP A, #$20
-    JZ ASM_CLR
-    JMP ASM_BAD
-ASM_TRIE_CM:
-    LDA [PTR+]
-    CMP A, #$50
-    JZ ASM_TRIE_CMP
-    JMP ASM_BAD
-ASM_TRIE_CMP:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_CMP
-    CMP A, #$20
-    JZ ASM_CMP
-    JMP ASM_BAD
-ASM_TRIE_D:
-    LDA [PTR+]
-    CMP A, #$45
-    JZ ASM_TRIE_DE
-    JMP ASM_BAD
-ASM_TRIE_DE:
-    LDA [PTR+]
-    CMP A, #$43
-    JZ ASM_TRIE_DEC
-    JMP ASM_BAD
-ASM_TRIE_DEC:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_DEC
-    CMP A, #$20
-    JZ ASM_DEC
-    JMP ASM_BAD
-ASM_TRIE_H:
-    LDA [PTR+]
-    CMP A, #$4C
-    JZ ASM_TRIE_HL
-    JMP ASM_BAD
-ASM_TRIE_HL:
-    LDA [PTR+]
-    CMP A, #$54
-    JZ ASM_TRIE_HLT
-    JMP ASM_BAD
-ASM_TRIE_HLT:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_HLT
-    CMP A, #$20
-    JZ ASM_HLT
-    JMP ASM_BAD
-ASM_TRIE_I:
-    LDA [PTR+]
-    CMP A, #$4E
-    JZ ASM_TRIE_IN
-    JMP ASM_BAD
-ASM_TRIE_IN:
-    LDA [PTR+]
-    CMP A, #$43
-    JZ ASM_TRIE_INC
-    JMP ASM_BAD
-ASM_TRIE_INC:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_INC
-    CMP A, #$20
-    JZ ASM_INC
-    JMP ASM_BAD
-ASM_TRIE_J:
-    LDA [PTR+]
-    CMP A, #$43
-    JZ ASM_TRIE_JC
-    CMP A, #$4D
-    JZ ASM_TRIE_JM
-    CMP A, #$4E
-    JZ ASM_TRIE_JN
-    CMP A, #$50
-    JZ ASM_TRIE_JP
-    CMP A, #$56
-    JZ ASM_TRIE_JV
-    CMP A, #$5A
-    JZ ASM_TRIE_JZ
-    JMP ASM_BAD
-ASM_TRIE_JC:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JC
-    CMP A, #$20
-    JZ ASM_JC
-    JMP ASM_BAD
-ASM_TRIE_JM:
-    LDA [PTR+]
-    CMP A, #$50
-    JZ ASM_TRIE_JMP
-    JMP ASM_BAD
-ASM_TRIE_JMP:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JMP
-    CMP A, #$20
-    JZ ASM_JMP
-    JMP ASM_BAD
-ASM_TRIE_JN:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JN
-    CMP A, #$20
-    JZ ASM_JN
-    CMP A, #$43
-    JZ ASM_TRIE_JNC
-    CMP A, #$56
-    JZ ASM_TRIE_JNV
-    CMP A, #$5A
-    JZ ASM_TRIE_JNZ
-    JMP ASM_BAD
-ASM_TRIE_JNC:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JNC
-    CMP A, #$20
-    JZ ASM_JNC
-    JMP ASM_BAD
-ASM_TRIE_JNV:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JNV
-    CMP A, #$20
-    JZ ASM_JNV
-    JMP ASM_BAD
-ASM_TRIE_JNZ:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JNZ
-    CMP A, #$20
-    JZ ASM_JNZ
-    JMP ASM_BAD
-ASM_TRIE_JP:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JP
-    CMP A, #$20
-    JZ ASM_JP
-    JMP ASM_BAD
-ASM_TRIE_JV:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JV
-    CMP A, #$20
-    JZ ASM_JV
-    JMP ASM_BAD
-ASM_TRIE_JZ:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_JZ
-    CMP A, #$20
-    JZ ASM_JZ
-    JMP ASM_BAD
-ASM_TRIE_L:
-    LDA [PTR+]
-    CMP A, #$44
-    JZ ASM_TRIE_LD
-    JMP ASM_BAD
-ASM_TRIE_LD:
-    LDA [PTR+]
-    CMP A, #$41
-    JZ ASM_TRIE_LDA
-    CMP A, #$42
-    JZ ASM_TRIE_LDB
-    JMP ASM_BAD
-ASM_TRIE_LDA:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_LDA
-    CMP A, #$20
-    JZ ASM_LDA
-    JMP ASM_BAD
-ASM_TRIE_LDB:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_LDB
-    CMP A, #$20
-    JZ ASM_LDB
-    JMP ASM_BAD
-ASM_TRIE_M:
-    LDA [PTR+]
-    CMP A, #$4F
-    JZ ASM_TRIE_MO
-    JMP ASM_BAD
-ASM_TRIE_MO:
-    LDA [PTR+]
-    CMP A, #$56
-    JZ ASM_TRIE_MOV
-    JMP ASM_BAD
-ASM_TRIE_MOV:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_MOV
-    CMP A, #$20
-    JZ ASM_MOV
-    JMP ASM_BAD
-ASM_TRIE_N:
-    LDA [PTR+]
-    CMP A, #$4F
-    JZ ASM_TRIE_NO
-    JMP ASM_BAD
-ASM_TRIE_NO:
-    LDA [PTR+]
-    CMP A, #$50
-    JZ ASM_TRIE_NOP
-    CMP A, #$54
-    JZ ASM_TRIE_NOT
-    JMP ASM_BAD
-ASM_TRIE_NOP:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_NOP
-    CMP A, #$20
-    JZ ASM_NOP
-    JMP ASM_BAD
-ASM_TRIE_NOT:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_NOT
-    CMP A, #$20
-    JZ ASM_NOT
-    JMP ASM_BAD
-ASM_TRIE_O:
-    LDA [PTR+]
-    CMP A, #$52
-    JZ ASM_TRIE_OR
-    JMP ASM_BAD
-ASM_TRIE_OR:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_OR
-    CMP A, #$20
-    JZ ASM_OR
-    JMP ASM_BAD
-ASM_TRIE_P:
-    LDA [PTR+]
-    CMP A, #$4F
-    JZ ASM_TRIE_PO
-    CMP A, #$54
-    JZ ASM_TRIE_PT
-    CMP A, #$55
-    JZ ASM_TRIE_PU
-    JMP ASM_BAD
-ASM_TRIE_PO:
-    LDA [PTR+]
-    CMP A, #$50
-    JZ ASM_TRIE_POP
-    JMP ASM_BAD
-ASM_TRIE_POP:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_POP
-    CMP A, #$20
-    JZ ASM_POP
-    JMP ASM_BAD
-ASM_TRIE_PT:
-    LDA [PTR+]
-    CMP A, #$52
-    JZ ASM_TRIE_PTR
-    JMP ASM_BAD
-ASM_TRIE_PTR:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_PTR
-    CMP A, #$20
-    JZ ASM_PTR
-    JMP ASM_BAD
-ASM_TRIE_PU:
-    LDA [PTR+]
-    CMP A, #$53
-    JZ ASM_TRIE_PUS
-    JMP ASM_BAD
-ASM_TRIE_PUS:
-    LDA [PTR+]
-    CMP A, #$48
-    JZ ASM_TRIE_PUSH
-    JMP ASM_BAD
-ASM_TRIE_PUSH:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_PUSH
-    CMP A, #$20
-    JZ ASM_PUSH
-    JMP ASM_BAD
-ASM_TRIE_R:
-    LDA [PTR+]
-    CMP A, #$45
-    JZ ASM_TRIE_RE
-    JMP ASM_BAD
-ASM_TRIE_RE:
-    LDA [PTR+]
-    CMP A, #$54
-    JZ ASM_TRIE_RET
-    JMP ASM_BAD
-ASM_TRIE_RET:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_RET
-    CMP A, #$20
-    JZ ASM_RET
-    JMP ASM_BAD
-ASM_TRIE_S:
-    LDA [PTR+]
-    CMP A, #$48
-    JZ ASM_TRIE_SH
-    CMP A, #$50
-    JZ ASM_TRIE_SP
-    CMP A, #$54
-    JZ ASM_TRIE_ST
-    CMP A, #$55
-    JZ ASM_TRIE_SU
-    JMP ASM_BAD
-ASM_TRIE_SH:
-    LDA [PTR+]
-    CMP A, #$4C
-    JZ ASM_TRIE_SHL
-    CMP A, #$52
-    JZ ASM_TRIE_SHR
-    JMP ASM_BAD
-ASM_TRIE_SHL:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_SHL
-    CMP A, #$20
-    JZ ASM_SHL
-    JMP ASM_BAD
-ASM_TRIE_SHR:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_SHR
-    CMP A, #$20
-    JZ ASM_SHR
-    JMP ASM_BAD
-ASM_TRIE_SP:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_SP
-    CMP A, #$20
-    JZ ASM_SP
-    JMP ASM_BAD
-ASM_TRIE_ST:
-    LDA [PTR+]
-    CMP A, #$41
-    JZ ASM_TRIE_STA
-    CMP A, #$42
-    JZ ASM_TRIE_STB
-    CMP A, #$49
-    JZ ASM_TRIE_STI
-    JMP ASM_BAD
-ASM_TRIE_STA:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_STA
-    CMP A, #$20
-    JZ ASM_STA
-    JMP ASM_BAD
-ASM_TRIE_STB:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_STB
-    CMP A, #$20
-    JZ ASM_STB
-    JMP ASM_BAD
-ASM_TRIE_STI:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_STI
-    CMP A, #$20
-    JZ ASM_STI
-    JMP ASM_BAD
-ASM_TRIE_SU:
-    LDA [PTR+]
-    CMP A, #$42
-    JZ ASM_TRIE_SUB
-    JMP ASM_BAD
-ASM_TRIE_SUB:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_SUB
-    CMP A, #$20
-    JZ ASM_SUB
-    JMP ASM_BAD
-ASM_TRIE_T:
-    LDA [PTR+]
-    CMP A, #$45
-    JZ ASM_TRIE_TE
-    JMP ASM_BAD
-ASM_TRIE_TE:
-    LDA [PTR+]
-    CMP A, #$53
-    JZ ASM_TRIE_TES
-    JMP ASM_BAD
-ASM_TRIE_TES:
-    LDA [PTR+]
-    CMP A, #$54
-    JZ ASM_TRIE_TEST
-    JMP ASM_BAD
-ASM_TRIE_TEST:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_TEST
-    CMP A, #$20
-    JZ ASM_TEST
-    JMP ASM_BAD
-ASM_TRIE_X:
-    LDA [PTR+]
-    CMP A, #$4F
-    JZ ASM_TRIE_XO
-    JMP ASM_BAD
-ASM_TRIE_XO:
-    LDA [PTR+]
-    CMP A, #$52
-    JZ ASM_TRIE_XOR
-    JMP ASM_BAD
-ASM_TRIE_XOR:
-    LDA [PTR+]
-    CMP A, #$00
-    JZ ASM_XOR
-    CMP A, #$20
-    JZ ASM_XOR
-    JMP ASM_BAD
+    JMP SHELL_COMMAND_DONE
 
 CMD_REBOOT:
     PTR STR_REBOOT
@@ -3569,25 +2676,9 @@ CMD_REBOOT:
     CALL VIDEO_BATCH_FLUSH
     STI $F500, #$70    ; reativa overlay mantendo configuração de clock
     JMP RESET
-STR_ASM_ENTER:
-    #d8 0x4D, 0x69, 0x6E, 0x69, 0x20, 0x61, 0x73, 0x73, 0x65, 0x6D, 0x62, 0x6C, 0x65, 0x72, 0x20, 0x61
-    #d8 0x74, 0x69, 0x76, 0x6F, 0x2E, 0x20, 0x4C, 0x69, 0x6E, 0x68, 0x61, 0x20, 0x76, 0x61, 0x7A, 0x69
-    #d8 0x61, 0x20, 0x73, 0x61, 0x69, 0x2E, 0x0D, 0x0A, 0x00
-STR_ASM_ERROR:
-    #d8 0x49, 0x6E, 0x73, 0x74, 0x72, 0x75, 0x63, 0x61, 0x6F, 0x20, 0x6F, 0x75, 0x20, 0x6F, 0x70, 0x65
-    #d8 0x72, 0x61, 0x6E, 0x64, 0x6F, 0x73, 0x20, 0x69, 0x6E, 0x76, 0x61, 0x6C, 0x69, 0x64, 0x6F, 0x73
-    #d8 0x2E, 0x0D, 0x0A, 0x00
-STR_ASM_EXIT:
-    #d8 0x53, 0x61, 0x69, 0x6E, 0x64, 0x6F, 0x20, 0x64, 0x6F, 0x20, 0x6D, 0x69, 0x6E, 0x69, 0x20, 0x61
-    #d8 0x73, 0x73, 0x65, 0x6D, 0x62, 0x6C, 0x65, 0x72, 0x2E, 0x0D, 0x0A, 0x00
-STR_ASM_INLINE_OK:
-    #d8 0x4D, 0x6F, 0x6E, 0x74, 0x61, 0x64, 0x6F, 0x2E, 0x20, 0x50, 0x72, 0x6F, 0x78, 0x69, 0x6D, 0x6F
-    #d8 0x3D, 0x24, 0x00
-STR_ASM_PROMPT:
-    #d8 0x3E, 0x20, 0x00
 STR_BANNER:
     #d8 0x0D, 0x0A, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x57, 0x61, 0x6C, 0x6C, 0x2D, 0x38, 0x20, 0x42
-    #d8 0x49, 0x4F, 0x53, 0x20, 0x4D, 0x6F, 0x6E, 0x69, 0x74, 0x6F, 0x72, 0x20, 0x76, 0x34, 0x2E, 0x30
+    #d8 0x49, 0x4F, 0x53, 0x20, 0x4D, 0x6F, 0x6E, 0x69, 0x74, 0x6F, 0x72, 0x20, 0x76, 0x34, 0x2E, 0x31
     #d8 0x0D, 0x0A, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
     #d8 0x20, 0x20, 0x20, 0x62, 0x79, 0x3A, 0x56, 0x69, 0x6E, 0x69, 0x63, 0x69, 0x75, 0x73, 0x20, 0x44
     #d8 0x69, 0x61, 0x73, 0x0A, 0x48, 0x65, 0x6C, 0x70, 0x20, 0x7C, 0x20, 0x54, 0x61, 0x62, 0x20, 0x7C
@@ -3631,30 +2722,29 @@ STR_DIV_ZERO:
 STR_GO_ADDR:
     #d8 0x53, 0x61, 0x6C, 0x74, 0x61, 0x6E, 0x64, 0x6F, 0x20, 0x70, 0x61, 0x72, 0x61, 0x20, 0x24, 0x00
 STR_HELP:
-    #d8 0x43, 0x4D, 0x44, 0x3A, 0x0D, 0x0A
-    #d8 0x20, 0x43, 0x4C, 0x53, 0x20, 0x7C, 0x20, 0x43, 0x4C, 0x45, 0x41, 0x52, 0x0D, 0x0A
-    #d8 0x20, 0x49, 0x4E, 0x46, 0x4F, 0x20, 0x7C, 0x20, 0x56, 0x45, 0x52, 0x0D, 0x0A, 0x20, 0x53, 0x54
-    #d8 0x41, 0x54, 0x55, 0x53, 0x0D, 0x0A, 0x20, 0x54, 0x49, 0x4D, 0x45, 0x52, 0x20, 0x5B, 0x43, 0x4C
-    #d8 0x45, 0x41, 0x52, 0x5D, 0x0D, 0x0A, 0x20, 0x52, 0x45, 0x41, 0x44, 0x20, 0x24, 0x68, 0x68, 0x68
-    #d8 0x68, 0x0D, 0x0A, 0x20, 0x57, 0x52, 0x49, 0x54, 0x45, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x20
-    #d8 0x76, 0x61, 0x6C, 0x6F, 0x72, 0x0D, 0x0A, 0x20, 0x43, 0x46, 0x47, 0x20, 0x24, 0x68, 0x68, 0x68
-    #d8 0x68, 0x20, 0x76, 0x61, 0x6C, 0x6F, 0x72, 0x0D, 0x0A, 0x20, 0x53, 0x4F, 0x55, 0x4E, 0x44, 0x20
-    #d8 0x76, 0x61, 0x6C, 0x6F, 0x72, 0x0D, 0x0A, 0x20, 0x44, 0x49, 0x53, 0x50, 0x20, 0x24, 0x68, 0x68
-    #d8 0x68, 0x68, 0x0D, 0x0A, 0x20, 0x43, 0x41, 0x52, 0x44, 0x0D, 0x0A, 0x20, 0x52, 0x55, 0x4E, 0x20
-    #d8 0x43, 0x41, 0x52, 0x44, 0x0D, 0x0A, 0x20, 0x41, 0x53, 0x4D, 0x20, 0x5B, 0x24, 0x68, 0x68, 0x68
-    #d8 0x68, 0x5D, 0x0D, 0x0A, 0x20, 0x4F, 0x52, 0x47, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x0D, 0x0A
-    #d8 0x20, 0x52, 0x55, 0x4E, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x0D, 0x0A, 0x20, 0x47, 0x4F, 0x20
-    #d8 0x24, 0x68, 0x68, 0x68, 0x68, 0x0D, 0x0A, 0x20, 0x52, 0x45, 0x42, 0x4F, 0x4F, 0x54, 0x0D, 0x0A
-    #d8 0x20, 0x41, 0x44, 0x44, 0x20, 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x53, 0x55, 0x42, 0x20, 0x61
-    #d8 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x4D, 0x55, 0x4C, 0x20, 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x44
-    #d8 0x49, 0x56, 0x20, 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x41, 0x4E, 0x44, 0x20, 0x61, 0x20, 0x62
-    #d8 0x0D, 0x0A, 0x20, 0x4F, 0x52, 0x20, 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x58, 0x4F, 0x52, 0x20
-    #d8 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x43, 0x4D, 0x50, 0x20, 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20
-    #d8 0x4E, 0x4F, 0x54, 0x20, 0x61, 0x0D, 0x0A, 0x20, 0x53, 0x48, 0x4C, 0x20, 0x61, 0x0D, 0x0A, 0x20
-    #d8 0x53, 0x48, 0x52, 0x20, 0x61, 0x0D, 0x0A, 0x20, 0x49, 0x4E, 0x43, 0x20, 0x61, 0x0D, 0x0A, 0x20
-    #d8 0x44, 0x45, 0x43, 0x20, 0x61, 0x0D, 0x0A
-    #d8 0x20, 0x54, 0x41, 0x42, 0x3A, 0x20, 0x72, 0x65, 0x63, 0x61, 0x6C, 0x6C, 0x20, 0x7C, 0x20
-    #d8 0x55, 0x50, 0x2F, 0x44, 0x4F, 0x57, 0x4E, 0x3A, 0x20, 0x73, 0x63, 0x72, 0x6F, 0x6C, 0x6C, 0x0D, 0x0A, 0x00
+    #d8 0x43, 0x4D, 0x44, 0x3A, 0x0D, 0x0A, 0x20, 0x4E, 0x55, 0x4D, 0x3A, 0x20, 0x35, 0x30, 0x3D, 0x48
+    #d8 0x45, 0x58, 0x20, 0x7C, 0x20, 0x23, 0x35, 0x30, 0x3D, 0x44, 0x45, 0x43, 0x0D, 0x0A, 0x20, 0x43
+    #d8 0x4C, 0x53, 0x20, 0x7C, 0x20, 0x43, 0x4C, 0x45, 0x41, 0x52, 0x0D, 0x0A, 0x20, 0x49, 0x4E, 0x46
+    #d8 0x4F, 0x20, 0x7C, 0x20, 0x56, 0x45, 0x52, 0x20, 0x7C, 0x20, 0x53, 0x54, 0x41, 0x54, 0x55, 0x53
+    #d8 0x0D, 0x0A, 0x20, 0x54, 0x49, 0x4D, 0x45, 0x52, 0x20, 0x5B, 0x43, 0x4C, 0x45, 0x41, 0x52, 0x5D
+    #d8 0x0D, 0x0A, 0x20, 0x52, 0x45, 0x41, 0x44, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x0D, 0x0A, 0x20
+    #d8 0x57, 0x52, 0x49, 0x54, 0x45, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x20, 0x76, 0x61, 0x6C, 0x6F
+    #d8 0x72, 0x0D, 0x0A, 0x20, 0x43, 0x46, 0x47, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x20, 0x76, 0x61
+    #d8 0x6C, 0x6F, 0x72, 0x0D, 0x0A, 0x20, 0x53, 0x4F, 0x55, 0x4E, 0x44, 0x20, 0x76, 0x61, 0x6C, 0x6F
+    #d8 0x72, 0x20, 0x7C, 0x20, 0x44, 0x49, 0x53, 0x50, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x0D, 0x0A
+    #d8 0x20, 0x52, 0x45, 0x47, 0x0D, 0x0A, 0x20, 0x52, 0x45, 0x47, 0x20, 0x41, 0x7C, 0x42, 0x20, 0x5B
+    #d8 0x76, 0x61, 0x6C, 0x6F, 0x72, 0x5D, 0x0D, 0x0A, 0x20, 0x52, 0x45, 0x47, 0x20, 0x50, 0x54, 0x52
+    #d8 0x7C, 0x53, 0x50, 0x20, 0x5B, 0x24, 0x68, 0x68, 0x68, 0x68, 0x5D, 0x0D, 0x0A, 0x20, 0x43, 0x41
+    #d8 0x52, 0x44, 0x20, 0x7C, 0x20, 0x52, 0x55, 0x4E, 0x20, 0x43, 0x41, 0x52, 0x44, 0x0D, 0x0A, 0x20
+    #d8 0x52, 0x55, 0x4E, 0x20, 0x24, 0x68, 0x68, 0x68, 0x68, 0x20, 0x7C, 0x20, 0x47, 0x4F, 0x20, 0x24
+    #d8 0x68, 0x68, 0x68, 0x68, 0x0D, 0x0A, 0x20, 0x52, 0x45, 0x42, 0x4F, 0x4F, 0x54, 0x0D, 0x0A, 0x20
+    #d8 0x41, 0x44, 0x44, 0x2F, 0x53, 0x55, 0x42, 0x2F, 0x4D, 0x55, 0x4C, 0x2F, 0x44, 0x49, 0x56, 0x20
+    #d8 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x41, 0x4E, 0x44, 0x2F, 0x4F, 0x52, 0x2F, 0x58, 0x4F, 0x52
+    #d8 0x2F, 0x43, 0x4D, 0x50, 0x20, 0x61, 0x20, 0x62, 0x0D, 0x0A, 0x20, 0x4E, 0x4F, 0x54, 0x2F, 0x53
+    #d8 0x48, 0x4C, 0x2F, 0x53, 0x48, 0x52, 0x2F, 0x49, 0x4E, 0x43, 0x2F, 0x44, 0x45, 0x43, 0x20, 0x61
+    #d8 0x0D, 0x0A, 0x20, 0x54, 0x41, 0x42, 0x3A, 0x20, 0x72, 0x65, 0x63, 0x61, 0x6C, 0x6C, 0x20, 0x7C
+    #d8 0x20, 0x55, 0x50, 0x2F, 0x44, 0x4F, 0x57, 0x4E, 0x3A, 0x20, 0x73, 0x63, 0x72, 0x6F, 0x6C, 0x6C
+    #d8 0x0D, 0x0A, 0x00
 STR_INFO:
     #d8 0x57, 0x41, 0x4C, 0x4C, 0x2D, 0x38, 0x3A, 0x20, 0x44, 0x42, 0x55, 0x53, 0x20, 0x38, 0x2D, 0x62
     #d8 0x69, 0x74, 0x2C, 0x20, 0x45, 0x58, 0x42, 0x55, 0x53, 0x20, 0x31, 0x36, 0x2D, 0x62, 0x69, 0x74
@@ -3705,6 +2795,18 @@ STR_RUN_CARD:
 STR_RUN_RETURN:
     #d8 0x50, 0x72, 0x6F, 0x67, 0x72, 0x61, 0x6D, 0x61, 0x20, 0x72, 0x65, 0x74, 0x6F, 0x72, 0x6E, 0x6F
     #d8 0x75, 0x3A, 0x20, 0x41, 0x3D, 0x24, 0x00
+STR_REG_A:
+    #d8 0x41, 0x3D, 0x24, 0x00
+STR_REG_B:
+    #d8 0x20, 0x42, 0x3D, 0x24, 0x00
+STR_REG_PTR:
+    #d8 0x20, 0x50, 0x54, 0x52, 0x3D, 0x24, 0x00
+STR_REG_SP:
+    #d8 0x20, 0x53, 0x50, 0x3D, 0x24, 0x00
+STR_UNKNOWN:
+    #d8 0x43, 0x6F, 0x6D, 0x61, 0x6E, 0x64, 0x6F, 0x20, 0x64, 0x65, 0x73, 0x63, 0x6F, 0x6E, 0x68, 0x65
+    #d8 0x63, 0x69, 0x64, 0x6F, 0x2E, 0x20, 0x44, 0x69, 0x67, 0x69, 0x74, 0x65, 0x20, 0x48, 0x45, 0x4C
+    #d8 0x50, 0x2E, 0x0D, 0x0A, 0x00
 STR_SOUND_SET:
     #d8 0x53, 0x4F, 0x55, 0x4E, 0x44, 0x20, 0x24, 0x46, 0x34, 0x30, 0x30, 0x3D, 0x24, 0x00
 STR_STATUS_HEX:
@@ -3718,7 +2820,7 @@ STR_TIMER_CLEARED:
     #d8 0x00
 STR_VERSION:
     #d8 0x57, 0x41, 0x4C, 0x4C, 0x2D, 0x38, 0x20, 0x42, 0x49, 0x4F, 0x53, 0x20, 0x4D, 0x6F, 0x6E, 0x69
-    #d8 0x74, 0x6F, 0x72, 0x20, 0x76, 0x33, 0x2E, 0x30, 0x0D, 0x0A, 0x00
+    #d8 0x74, 0x6F, 0x72, 0x20, 0x76, 0x34, 0x2E, 0x31, 0x0D, 0x0A, 0x00
 STR_VIDEO_OFF:
     #d8 0x56, 0x49, 0x44, 0x45, 0x4F, 0x3D, 0x4F, 0x46, 0x46, 0x20, 0x00
 STR_VIDEO_ON:

@@ -4,7 +4,7 @@ setlocal
 rem Vai para a pasta Software
 cd /d "%~dp0.."
 
-Tools\customasm.exe CARD\CARD_03.asm -f binary -o CARD\CARD_03.bin
+Tools\customasm.exe CARD\CARD_battle_city_wall8.asm -f binary -o CARD\CARD_battle_city_wall8.bin
 
 if errorlevel 1 (
     echo.

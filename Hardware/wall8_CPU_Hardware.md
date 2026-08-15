@@ -359,7 +359,7 @@ Para liberar a RAM, o código deve primeiro saltar para `0x8000-0x9FFF`. A instr
 
 ### 7.4 Cartucho
 
-O cartucho ocupa 20 KiB e recebe endereço, dados, controles de memória, clock, alimentação e `/CARD_DETECT`. O módulo pode implementar ROM, EEPROM, Flash ou SRAM.
+O cartucho ocupa 20 KiB de memória em `0xA000-0xEFFF`, selecionada por `/CARD_SEL`, e recebe endereço, dados, controles de memória, clock, alimentação e `/CARD_DETECT`. O conector também recebe `/CARD_IO_SEL`, ativo para a página `Y6` (`0xF600-0xF6FF`, espelhada em `0xFE00-0xFEFF`). O módulo pode implementar ROM, EEPROM, Flash, SRAM, lógica ou periféricos próprios. O WALL-8 não define registradores em `CART_IO`: os offsets e suas funções são definidos pelo hardware do cartucho e controlados pelo código da própria ROM do cartucho.
 
 Não há MMU, proteção de escrita, proteção da pilha ou exceção de endereço. Software e hardware externo devem respeitar os limites por convenção.
 
@@ -375,7 +375,7 @@ Não há MMU, proteção de escrita, proteção da pilha ou exceção de endere�
 | `011` | `Y3` | `0xF300-0xF3FF` | `0xFB00-0xFBFF` | Status/timers |
 | `100` | `Y4` | `0xF400-0xF4FF` | `0xFC00-0xFCFF` | Som |
 | `101` | `Y5` | `0xF500-0xF5FF` | `0xFD00-0xFDFF` | Configuração |
-| `110` | `Y6` | `0xF600-0xF6FF` | `0xFE00-0xFEFF` | Reservado |
+| `110` | `Y6` | `0xF600-0xF6FF` | `0xFE00-0xFEFF` | CART_IO |
 | `111` | `Y7` | `0xF700-0xF7FF` | `0xFF00-0xFFFF` | Reservado |
 
 Dentro de cada página:
@@ -384,6 +384,7 @@ Dentro de cada página:
 - display usa `A0`: par seleciona LOW, ímpar seleciona HIGH;
 - configuração usa `A0`: par seleciona CPU, ímpar seleciona periféricos;
 - vídeo decodifica `A7-A0` para os cinco registradores iniciais.
+- `CART_IO` é encaminhado ao conector; a decodificação de `A7-A0` e o significado dos offsets pertencem ao hardware do cartucho.
 
 ## 9. Registradores de I/O
 
@@ -450,7 +451,7 @@ Comandos iniciais de `VIDEO_CMD`:
 
 | Modo | `VIDEO_X` | `VIDEO_Y` | Organização de `VIDEO_DATA` |
 |---|---|---|---|
-| Texto 40×30 | 0-39 | 0-29 | Código de caractere; 40 bytes por linha |
+| Texto 80×30 | 0-79 | 0-29 | Código de caractere; 80 bytes por linha |
 | Gráfico 320×240 | 0-39 | 0-239 | Oito pixels por byte; 40 bytes por linha |
 | Gráfico 160×120 | 0-19 | 0-119 | Oito pixels por byte; 20 bytes por linha |
 
@@ -823,12 +824,12 @@ O teclado presente leva `/KEYBOARD_DETECT` ao GND. O resistor de pull-up mantém
 | 27 | `EXBUS11` | 28 | `/MEMORY_WE` |
 | 29 | `EXBUS12` | 30 | `/CARD_DETECT` |
 | 31 | `EXBUS13` | 32 | NC |
-| 33 | `EXBUS14` | 34 | NC |
+| 33 | `EXBUS14` | 34 | `/CARD_IO_SEL` |
 | 35 | `EXBUS15` | 36 | NC |
 | 37 | GND | 38 | +5 V |
 | 39 | GND | 40 | +5 V |
 
-`CLOCK_ADDMAR` é um ramo do clock da CPU. Um ciclo válido é definido pelo endereço, `/CARD_SEL` e `/MEMORY_OE` ou `/MEMORY_WE`.
+`CLOCK_ADDMAR` é um ramo do clock da CPU. Um acesso à memória do cartucho é definido pelo endereço, `/CARD_SEL` e `/MEMORY_OE` ou `/MEMORY_WE`; um acesso ao I/O do cartucho é definido pelo endereço, `/CARD_IO_SEL` e `/MEMORY_OE` ou `/MEMORY_WE`.
 
 ### 13.3 Vídeo/GPU — J4, 2×20
 

@@ -341,7 +341,10 @@ SYSTEM_STATUS  = $F300
 SOUND_CFG      = $F400
 CPU_CFG        = $F500
 PERIPH_CFG     = $F501
+CART_IO_BASE    = $F600
 ```
+
+A página `0xF600-0xF6FF`, espelhada em `0xFE00-0xFEFF`, é encaminhada ao cartucho por `/CARD_IO_SEL`. O WALL-8 não define registradores em `CART_IO`: os offsets e suas funções são definidos pelo hardware de cada cartucho e controlados pelo código da própria ROM do cartucho.
 
 ### Timers
 

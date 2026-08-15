@@ -256,7 +256,7 @@ O bloco `0xF000-0xFFFF` é dividido por um `74HC138`. Como `A11` não participa 
 | `0xF300-0xF3FF` | `0xFB00-0xFBFF` | Status e timers |
 | `0xF400-0xF4FF` | `0xFC00-0xFCFF` | Som |
 | `0xF500-0xF5FF` | `0xFD00-0xFDFF` | Configuração/GPIO |
-| `0xF600-0xF6FF` | `0xFE00-0xFEFF` | Livre |
+| `0xF600-0xF6FF` | `0xFE00-0xFEFF` | CART_IO |
 | `0xF700-0xF7FF` | `0xFF00-0xFFFF` | Livre |
 
 ### Endereços utilizados
@@ -429,13 +429,13 @@ Uma escrita em `0xF300` limpa os eventos armazenados.
 
 ### Cartucho e expansão
 
-A faixa `0xA000-0xEFFF` reserva 20 KiB para cartuchos. O hardware pode acomodar ROM, EEPROM, Flash, SRAM com bateria ou outra placa compatível. A presença é indicada por `/CARD_DETECT`.
+A faixa `0xA000-0xEFFF` reserva 20 KiB para a memória do cartucho, selecionada por `/CARD_SEL`. A página `Y6` (`0xF600-0xF6FF`, espelhada em `0xFE00-0xFEFF`) é encaminhada ao cartucho por `/CARD_IO_SEL`. O hardware pode acomodar ROM, EEPROM, Flash, SRAM com bateria, lógica ou periféricos próprios. A presença é indicada por `/CARD_DETECT`.
 
-As páginas `Y6` e `Y7` do I/O permanecem livres para novos dispositivos.
+`Y6` pertence ao cartucho como `CART_IO`. O WALL-8 não define registradores nessa página: os offsets e suas funções são definidos pelo hardware de cada cartucho e controlados pelo código da própria ROM do cartucho. `Y7` permanece livre para expansão futura.
 
 ## Interface de vídeo
 
-A GPU é uma placa separada com VRAM própria. O README documenta apenas o contrato visível pela CPU; detalhes de temporização VGA, arbitragem da VRAM, fonte e circuito ficam na [especificação da placa de vídeo](Hardware/wall8_GPU_Hardware.md).
+A GPU é uma placa separada com VRAM própria. O README documenta apenas o contrato visível pela CPU; detalhes de temporização VGA, arbitragem da VRAM, fonte e circuito ficam na [especificação da placa de vídeo](Hardware/GPU/wall8_GPU_Hardware.md).
 
 ### Registradores
 
@@ -632,7 +632,7 @@ O [`Software/Checkup`](Software/Checkup/) é o programa de diagnóstico geral do
 
 - [Manual de Referência Técnica](WALL-8_Manual_de_Referencia_Tecnica_Rev1.1.pdf) — documento consolidado em formato de datasheet;
 - [Referência completa das instruções](Software/wall8_instrucoes.md) — opcodes, bytes, ciclos, flags e exemplos;
-- [Especificação da placa de vídeo](Hardware/wall8_GPU_Hardware.md) — protocolo, registradores, modos e arquitetura da GPU;
+- [Especificação da placa de vídeo](Hardware/GPU/wall8_GPU_Hardware.md) — protocolo, registradores, modos e arquitetura da GPU;
 - [Guia do Checkup](Software/Checkup/wall8_checkup_completo_v1_guia.md) — sequência de testes do diagnóstico geral;
 - [Esquema eletrônico completo](Hardware/Hardware_CPU_Completo.pdf) — folhas exportadas do Proteus;
 - [Fluxograma da arquitetura](fluxograma_A4_horizontal.pdf) — visão gráfica em formato A4.

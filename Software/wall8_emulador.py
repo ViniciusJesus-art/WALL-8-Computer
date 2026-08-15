@@ -48,6 +48,7 @@ entram no RESET ativo-baixo dos NE555; portanto nível 1 libera o oscilador.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import struct
 import sys
@@ -857,7 +858,11 @@ class TimerDevice:
 class SoundDevice:
     """Emulação opcional do tone/noise do esquema usando pygame."""
 
-    RESISTORS = (27_000, 24_000, 22_000, 20_000, 18_000, 16_000, 14_000, 13_000)
+    # O multiplexador do circuito deixa a seleção binária invertida em relação
+    # à frequência: 000 escolhe a menor resistência (maior frequência) e 111
+    # escolhe a maior resistência (menor frequência). A tabela atende tanto ao
+    # oscilador de TONE quanto ao clock do gerador de NOISE.
+    RESISTORS = (13_000, 14_000, 16_000, 18_000, 20_000, 22_000, 24_000, 27_000)
     R_FIXED = 1_000
     C_TIMING = 100e-9
     SAMPLE_RATE = 44_100
@@ -1773,6 +1778,14 @@ class Wall8App:
         "4 MHz": 4_000_000,
     }
 
+    TERMINAL_COLORS = {
+        "Branco": "#ffffff",
+        "Verde": "#67ff67",
+        "Âmbar": "#ffb000",
+        "Ciano": "#67ffff",
+    }
+    CONFIG_PATH = Path.home() / ".wall8_emulador.json"
+
     def __init__(self, bus: Wall8Bus, cpu: Wall8CPU) -> None:
         import tkinter as tk
         import tkinter.font as tkfont
@@ -1797,8 +1810,11 @@ class Wall8App:
         self._cycle_credit = 0.0
         self._last_ui_time = self._last_tick
         self.keyboard_capture_active = False
-        self.bios_dialog_dir: Optional[Path] = None
-        self.cart_dialog_dir: Optional[Path] = None
+        config = self._load_config()
+        self.bios_dialog_dir = self._saved_file_parent(config.get("bios_path"))
+        self.cart_dialog_dir = self._saved_file_parent(config.get("cart_path"))
+        self.terminal_color_name = self._load_terminal_color(config)
+        self.startup_status = self._restore_saved_images(config)
 
         self.root = tk.Tk()
         self.root.title("WALL-8 Emulator")
@@ -1889,6 +1905,20 @@ class Wall8App:
             "<<ComboboxSelected>>",
             self._set_video_pixel_scale,
         )
+        ttk.Label(toolbar, text="Cor do terminal:").pack(
+            side="left",
+            padx=(14, 4),
+        )
+        self.terminal_color_var = tk.StringVar(value=self.terminal_color_name)
+        terminal_color = ttk.Combobox(
+            toolbar,
+            textvariable=self.terminal_color_var,
+            values=tuple(self.TERMINAL_COLORS),
+            width=8,
+            state="readonly",
+        )
+        terminal_color.pack(side="left")
+        terminal_color.bind("<<ComboboxSelected>>", self._set_terminal_color)
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         self.cart_connected_var = tk.BooleanVar(value=self.bus.cart_connected)
         ttk.Checkbutton(
@@ -1912,7 +1942,7 @@ class Wall8App:
             command=self._set_device_connections,
         ).pack(side="left", padx=2)
 
-        self.status_var = tk.StringVar(value="Pronto")
+        self.status_var = tk.StringVar(value=self.startup_status or "Pronto")
         ttk.Label(toolbar, textvariable=self.status_var).pack(side="right", padx=8)
 
         main = ttk.Panedwindow(self.root, orient="horizontal")
@@ -2098,6 +2128,7 @@ class Wall8App:
         try:
             self.bios_dialog_dir = Path(path).parent
             self.bus.load_bios_file(path)
+            self._save_config_value("bios_path", str(Path(path).resolve()))
             self.reset(start=False)
             self.status_var.set(
                 f"BIOS: {Path(path).name} — {self.bus.bios_load_mode}"
@@ -2118,6 +2149,7 @@ class Wall8App:
         try:
             self.cart_dialog_dir = Path(path).parent
             self.bus.load_cart_file(path)
+            self._save_config_value("cart_path", str(Path(path).resolve()))
             self.cart_connected_var.set(True)
             self.status_var.set(f"Cartucho: {Path(path).name}")
         except Exception as exc:
@@ -2464,6 +2496,83 @@ class Wall8App:
         self.video_pixel_scale = scale
         self._configure_video_canvas()
 
+    def _load_config(self) -> dict:
+        """Lê as preferências persistentes do emulador."""
+        try:
+            config = json.loads(self.CONFIG_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        return config if isinstance(config, dict) else {}
+
+    def _restore_saved_images(self, config: dict) -> str:
+        """Recarrega BIOS e cartucho da sessão anterior quando ainda existem."""
+        restored = []
+        unavailable = []
+
+        # Um arquivo informado explicitamente por --bios/--cart tem prioridade.
+        for label, key, current_path, loader in (
+            ("BIOS", "bios_path", self.bus.bios_path, self.bus.load_bios_file),
+            ("cartucho", "cart_path", self.bus.cart_path, self.bus.load_cart_file),
+        ):
+            if current_path is not None:
+                continue
+            saved_path = config.get(key)
+            if not isinstance(saved_path, str) or not saved_path:
+                continue
+            path = Path(saved_path).expanduser()
+            if not path.is_file():
+                unavailable.append(f"{label} não encontrado: {path.name}")
+                continue
+            try:
+                loader(path)
+                restored.append(f"{label}: {path.name}")
+            except (OSError, ValueError) as exc:
+                unavailable.append(f"falha na {label}: {exc}")
+
+        messages = restored + unavailable
+        return "; ".join(messages)
+
+    @staticmethod
+    def _saved_file_parent(saved_path) -> Optional[Path]:
+        """Retorna a pasta de um arquivo salvo somente quando ela ainda existe."""
+        if not isinstance(saved_path, str) or not saved_path:
+            return None
+        parent = Path(saved_path).expanduser().parent
+        return parent if parent.is_dir() else None
+
+    def _save_config_value(self, key: str, value: str) -> bool:
+        """Atualiza uma preferência sem apagar as demais."""
+        config = self._load_config()
+        config[key] = value
+        try:
+            self.CONFIG_PATH.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            if hasattr(self, "status_var"):
+                self.status_var.set(f"Não foi possível salvar a preferência: {exc}")
+            return False
+        return True
+
+    def _load_terminal_color(self, config: Optional[dict] = None) -> str:
+        """Lê a última cor escolhida; branco é o padrão da primeira execução."""
+        if config is None:
+            config = self._load_config()
+        color_name = config.get("terminal_color", "Branco")
+        return color_name if color_name in self.TERMINAL_COLORS else "Branco"
+
+    def _set_terminal_color(self, _event=None) -> None:
+        """Aplica e persiste a cor dos caracteres e pixels acesos."""
+        color_name = self.terminal_color_var.get()
+        if color_name not in self.TERMINAL_COLORS:
+            color_name = "Branco"
+            self.terminal_color_var.set(color_name)
+        self.terminal_color_name = color_name
+        self._save_config_value("terminal_color", color_name)
+        self.bus.video.dirty = True
+        self._update_terminal(force=True)
+
     def _toggle_fullscreen(self, _event=None) -> str:
         enabled = not bool(self.root.attributes("-fullscreen"))
         self.root.attributes("-fullscreen", enabled)
@@ -2526,7 +2635,8 @@ class Wall8App:
             logical_width = self.bus.video.logical_width
             logical_height = self.bus.video.logical_height
             image = self.tk.PhotoImage(width=logical_width, height=logical_height)
-            on, off = "#67ff67", "#071007"
+            on = self.TERMINAL_COLORS[self.terminal_color_name]
+            off = "#071007"
             rows = []
             stride = self.bus.video.bytes_per_line
             for y in range(logical_height):
@@ -2563,7 +2673,7 @@ class Wall8App:
                         y,
                         text=char,
                         font=self.video_font,
-                        fill="#67ff67",
+                        fill=self.TERMINAL_COLORS[self.terminal_color_name],
                         anchor="center",
                     )
 
@@ -2577,7 +2687,7 @@ class Wall8App:
                 y0,
                 x0 + cell_width,
                 y0 + cell_height,
-                fill="#67ff67",
+                fill=self.TERMINAL_COLORS[self.terminal_color_name],
                 outline="",
             )
             char = self.bus.video.cells[self.bus.video.y][self.bus.video.x]
