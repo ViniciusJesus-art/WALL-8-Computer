@@ -357,7 +357,7 @@ A CPU trabalha em até `16 MHz`, enquanto a GPU usa aproximadamente `25,175 MHz`
 - [ ] A soma possui bits suficientes para chegar a `$257F` sem overflow.
 - [ ] `VIDEO_X` gráfico representa uma coluna de byte, não um pixel individual.
 - [ ] `VIDEO_Y` gráfico representa uma linha lógica de pixels.
-- [ ] O bit 7 de `VIDEO_DATA` corresponde ao pixel mais à esquerda.
+- [ ] O bit 0 de `VIDEO_DATA` corresponde ao pixel mais à esquerda.
 
 ### 9.3. Endereço de varredura
 
@@ -388,11 +388,12 @@ A CPU trabalha em até `16 MHz`, enquanto a GPU usa aproximadamente `25,175 MHz`
 - [ ] A fonte contém 256 caracteres.
 - [ ] Cada caractere contém 8 linhas de 8 bits.
 - [ ] A fonte inicial ocupa 2.048 bytes.
-- [ ] O endereço da fonte segue `código × 8 + linha_da_fonte`.
-- [ ] Na EPROM, `A0..A2` recebem a linha da fonte `0..7`.
-- [ ] Na EPROM, `A3..A10` recebem o código de caractere `0..255`.
-- [ ] Os bits superiores `A11..A15` da `27C512` ficam em nível definido no banco inicial.
-- [ ] O bit 7 da linha da fonte aparece à esquerda da célula.
+- [ ] O endereço segue `(banco << 14) | (linha_da_fonte << 8) | código`.
+- [ ] Na EPROM, `A0..A7` recebem o código de caractere `0..255`.
+- [ ] Na EPROM, `A8..A10` recebem a linha da fonte `0..7`.
+- [ ] Na EPROM, `A11..A13` permanecem em GND.
+- [ ] Na EPROM, `A14..A15` selecionam um dos quatro bancos.
+- [ ] O bit 0 da linha da fonte aparece à esquerda da célula.
 
 ### 10.3. Formação da célula física
 
@@ -449,7 +450,7 @@ VRAM → latch do código → endereço da ROM → byte da fonte → shift regis
 - [ ] Cada byte representa oito pixels lógicos horizontais.
 - [ ] Uma linha lógica possui 40 bytes.
 - [ ] O framebuffer utiliza 9.600 bytes em `$0000..$257F`.
-- [ ] O bit 7 é o primeiro pixel e o bit 0 é o oitavo pixel.
+- [ ] O bit 0 é o primeiro pixel e o bit 7 é o oitavo pixel.
 - [ ] Cada bit do byte permanece na saída durante dois pixels clocks.
 - [ ] Cada linha lógica é exibida em duas linhas físicas.
 - [ ] Cada pixel lógico forma um bloco físico de 2 × 2.
@@ -466,7 +467,7 @@ VRAM → latch do código → endereço da ROM → byte da fonte → shift regis
 - [ ] Cada byte representa oito pixels lógicos horizontais.
 - [ ] Uma linha lógica possui 20 bytes.
 - [ ] O framebuffer utiliza 2.400 bytes em `$0000..$095F`.
-- [ ] O bit 7 é o primeiro pixel e o bit 0 é o oitavo pixel.
+- [ ] O bit 0 é o primeiro pixel e o bit 7 é o oitavo pixel.
 - [ ] Cada bit do byte permanece na saída durante quatro pixels clocks.
 - [ ] Cada linha lógica é exibida em quatro linhas físicas.
 - [ ] Cada pixel lógico forma um bloco físico de 4 × 4.
@@ -656,7 +657,7 @@ Prioridade oficial:
 
 - [ ] Preencher a VRAM com um padrão conhecido.
 - [ ] Testar a leitura sequencial e o shift register.
-- [ ] Validar bit 7 à esquerda.
+- [ ] Validar bit 0 à esquerda.
 - [ ] Validar escala 2 × 2.
 - [ ] Validar escala 4 × 4.
 
@@ -704,8 +705,8 @@ Prioridade oficial:
 
 - [ ] `$00` produz oito pixels apagados.
 - [ ] `$FF` produz oito pixels acesos.
-- [ ] `$80` acende somente o pixel mais à esquerda do grupo.
-- [ ] `$01` acende somente o pixel mais à direita do grupo.
+- [ ] `$01` acende somente o pixel mais à esquerda do grupo.
+- [ ] `$80` acende somente o pixel mais à direita do grupo.
 - [ ] `$AA` produz o padrão `10101010`.
 - [ ] `$55` produz o padrão `01010101`.
 

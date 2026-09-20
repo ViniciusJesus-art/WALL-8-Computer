@@ -455,7 +455,8 @@ Comandos iniciais de `VIDEO_CMD`:
 | Gráfico 320×240 | 0-39 | 0-239 | Oito pixels por byte; 40 bytes por linha |
 | Gráfico 160×120 | 0-19 | 0-119 | Oito pixels por byte; 20 bytes por linha |
 
-Nos modos gráficos, o bit 7 representa o pixel mais à esquerda do grupo.
+Nos modos gráficos, o bit 0 representa o pixel mais à esquerda do grupo e
+o bit 7 representa o pixel mais à direita.
 
 ### 9.4 `SYSTEM_STATUS` — `0xF300`
 

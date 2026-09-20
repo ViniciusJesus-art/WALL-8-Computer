@@ -714,7 +714,8 @@ FOOD_RETRY:
     STA FOOD_Y
     STA DRAW_Y
 
-    STI DRAW_VALUE, #$AA
+    ; D0 e o pixel mais a esquerda: preserva a fase visual do padrao antigo $AA.
+    STI DRAW_VALUE, #$55
     CALL DRAW_CELL
 
     RET
@@ -1155,7 +1156,8 @@ GAME_OVER_LOOP:
 DRAW_GAME_OVER_MARK:
 
     PTR GAME_OVER_TABLE
-    STI DRAW_VALUE, #$55
+    ; D0 e o pixel mais a esquerda: preserva a fase visual do padrao antigo $55.
+    STI DRAW_VALUE, #$AA
 
 
 GAME_OVER_DRAW_LOOP:

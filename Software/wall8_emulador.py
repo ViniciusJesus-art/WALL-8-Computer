@@ -17,6 +17,7 @@ Uso:
     python wall8_emulator_v16.py
     python wall8_emulator_v16.py --bios bios.bin --cart cart.bin
     python wall8_emulator_v16.py --bios eprom_27c512.bin
+    python wall8_emulator_v16.py --char-rom char_rom_27c512.bin
     python wall8_emulator_v16.py --self-test
 
 Mapeamento físico das 27C512:
@@ -77,6 +78,8 @@ RAM_SIZE = 0x8000
 BIOS_WINDOW_SIZE = 0x2000          # 8 KiB visíveis por janela
 EPROM_27C512_SIZE = 0x10000        # 64 KiB físicos por 27C512
 CART_WINDOW_SIZE = 0x5000          # 20 KiB visíveis no mapa da CPU
+CHAR_ROM_SIZE = EPROM_27C512_SIZE
+DEFAULT_CHAR_ROM_PATH = Path(__file__).with_name("char_rom_27c512.bin")
 
 KEY_BASE = 0xF000
 DISPLAY_LOW = 0xF100
@@ -583,25 +586,78 @@ class TerminalDevice:
 
 
 class VideoDevice:
-    """Placa de video oficial: VRAM de 32 KiB e interface em F200..F204."""
+    """Placa de video oficial: VRAM, ROM de caracteres e interface F200..F204."""
 
     VRAM_SIZE = 0x8000
     MODE_TEXT = 0x11
     MODE_GFX_320 = 0x12
     MODE_GFX_160 = 0x13
+    PIXEL_CLOCK_HZ = 25_175_000
+    H_TOTAL = 800
+    V_TOTAL = 525
 
     def __init__(self) -> None:
         self.vram = bytearray(self.VRAM_SIZE)
+        # Imagem fisica completa da 27C512. Somente os enderecos com
+        # A11..A13=000 sao selecionados pelo circuito atual.
+        self.character_rom = bytearray(CHAR_ROM_SIZE)
+        self.character_rom_path: Optional[Path] = None
+        self.character_rom_load_mode = "vazia"
+        self.character_bank = 0
         self.mode = self.MODE_TEXT
         self.x = self.y = 0
         self.data_latch = self.read_latch = 0
         self.busy = False
         self.cursor_end = False
         self._pending: Optional[tuple[str, int, int, int]] = None
-        self._frame_epoch = time.perf_counter()
+        self._pixel_phase = 0.0
+        self._pixel_counter = 0
+        self._hardware_frame = 0
+        self._slot_phase = 0
         self.cursor_visible = True
         self.dirty = True
+        self.dirty_addresses: set[int] = set()
         self.reset()
+
+    @staticmethod
+    def character_rom_address(bank: int, character: int, row: int) -> int:
+        """Monta A0..A15 da 27C512 exatamente como no esquema da GPU."""
+        if not 0 <= bank <= 3:
+            raise ValueError("Banco da fonte deve estar entre 0 e 3")
+        if not 0 <= character <= 0xFF:
+            raise ValueError("Codigo de caractere deve estar entre 0x00 e 0xFF")
+        if not 0 <= row <= 7:
+            raise ValueError("Linha do caractere deve estar entre 0 e 7")
+        return (bank << 14) | (row << 8) | character
+
+    def load_character_rom_bytes(self, raw: bytes) -> None:
+        """Carrega uma imagem fisica completa da EPROM de caracteres."""
+        if len(raw) != CHAR_ROM_SIZE:
+            raise ValueError(
+                f"ROM de caracteres possui {len(raw)} bytes; "
+                f"a 27C512 exige exatamente {CHAR_ROM_SIZE} bytes"
+            )
+        self.character_rom[:] = raw
+        self.character_rom_load_mode = "imagem fisica completa de 64 KiB"
+        self.dirty = True
+
+    def load_character_rom_file(self, path: str | Path) -> None:
+        rom_path = Path(path)
+        self.load_character_rom_bytes(rom_path.read_bytes())
+        self.character_rom_path = rom_path
+
+    def set_character_bank(self, bank: int) -> None:
+        if not 0 <= bank <= 3:
+            raise ValueError("Banco da fonte deve estar entre 0 e 3")
+        if bank != self.character_bank:
+            self.character_bank = bank
+            self.dirty = True
+
+    def character_row(self, character: int, row: int) -> int:
+        address = self.character_rom_address(
+            self.character_bank, character & 0xFF, row
+        )
+        return self.character_rom[address]
 
     @property
     def width(self) -> int:
@@ -651,9 +707,13 @@ class VideoDevice:
         self.busy = False
         self.cursor_end = False
         self._pending = None
-        self._frame_epoch = time.perf_counter()
+        self._pixel_phase = 0.0
+        self._pixel_counter = 0
+        self._hardware_frame = 0
+        self._slot_phase = 0
         self.cursor_visible = True
         self.dirty = True
+        self.dirty_addresses = set(range(self.used_size))
 
     def clear(self) -> None:
         fill = 0x20 if self.mode == self.MODE_TEXT else 0
@@ -661,6 +721,8 @@ class VideoDevice:
         self.x = self.y = 0
         self.cursor_end = False
         self.dirty = True
+        self.dirty_addresses.update(range(self.used_size))
+        self._slot_phase = 0
 
     def _address(self, x: int, y: int) -> int:
         return y * self.bytes_per_line + x
@@ -697,8 +759,11 @@ class VideoDevice:
                 self.x = 79
             self.vram[self.y * 80 + self.x] = 0x20
             self.dirty = True
+            self.dirty_addresses.add(self.y * 80 + self.x)
         elif value >= 0x20:
-            self.vram[self.y * 80 + self.x] = value
+            address = self.y * 80 + self.x
+            self.vram[address] = value
+            self.dirty_addresses.add(address)
             self._increment()
             self.dirty = True
 
@@ -707,6 +772,8 @@ class VideoDevice:
         self.x = self.y = 0
         self.cursor_end = False
         self.dirty = True
+        self.dirty_addresses.update(range(self.used_size))
+        self._slot_phase = 0
 
     def set_geometry(self, width: int, height: int) -> None:
         """Traduz chamadas antigas da GUI para os tres modos oficiais."""
@@ -722,6 +789,38 @@ class VideoDevice:
             self.busy = True
             self._pending = (operation, self.x, self.y, value & 0xFF)
 
+    @property
+    def _slot_pixels(self) -> int:
+        """Clocks de pixel entre buscas consecutivas da VRAM no modo ativo."""
+        return {self.MODE_TEXT: 8, self.MODE_GFX_320: 16,
+                self.MODE_GFX_160: 32}[self.mode]
+
+    def advance_time(self, seconds: float) -> None:
+        """Avanca o dominio independente de 25,175 MHz da placa de video."""
+        if seconds <= 0:
+            return
+        pixels = self._pixel_phase + seconds * self.PIXEL_CLOCK_HZ
+        whole_pixels = int(pixels)
+        self._pixel_phase = pixels - whole_pixels
+        if not whole_pixels:
+            return
+
+        frame_pixels = self.H_TOTAL * self.V_TOTAL
+        total_pixels = self._pixel_counter + whole_pixels
+        frames, self._pixel_counter = divmod(total_pixels, frame_pixels)
+        self._hardware_frame += frames
+        slot_pixels = self._slot_pixels
+        slot_total = self._slot_phase + whole_pixels
+        new_slots, self._slot_phase = divmod(slot_total, slot_pixels)
+
+        while new_slots > 0 and self._pending is not None:
+            operation = self._pending[0]
+            self.advance()
+            new_slots -= 1
+            # CLEAR conserva BUSY e consome um slot por byte.
+            if operation != "clear":
+                break
+
     def advance(self) -> None:
         """Executa uma operacao pendente no slot de VRAM seguinte."""
         if self._pending is None:
@@ -732,13 +831,25 @@ class VideoDevice:
             if self.mode == self.MODE_TEXT:
                 self._put_text(value)
             else:
-                self.vram[self._address(x, y)] = value
+                address = self._address(x, y)
+                self.vram[address] = value
+                self.dirty_addresses.add(address)
                 self._increment()
                 self.dirty = True
         elif operation == "read":
             self.read_latch = self.vram[self._address(x, y)]
         else:
-            self.clear()
+            address = value
+            fill = 0x20 if self.mode == self.MODE_TEXT else 0
+            self.vram[address] = fill
+            self.dirty_addresses.add(address)
+            self.dirty = True
+            address += 1
+            if address < self.used_size:
+                self._pending = ("clear", 0, 0, address)
+                return
+            self.x = self.y = 0
+            self.cursor_end = False
         self._pending = None
         self.busy = False
 
@@ -754,7 +865,7 @@ class VideoDevice:
                          self.MODE_GFX_160) and not self.busy:
                 self._select_mode(value)
             elif value == 0x00:
-                self._start("clear")
+                self._start("clear", 0)
             elif value == 0x04 and self.mode == self.MODE_TEXT:
                 self.cursor_visible = False
                 self.dirty = True
@@ -779,11 +890,11 @@ class VideoDevice:
         if offset == 3:
             return self.y
         if offset == 4:
-            elapsed = time.perf_counter() - self._frame_epoch
-            pixel = int((elapsed % (1.0 / 60.0)) * 60.0 * 800 * 525)
-            hpos, vpos = pixel % 800, pixel // 800
+            hpos = self._pixel_counter % self.H_TOTAL
+            vpos = self._pixel_counter // self.H_TOTAL
             return (int(self.busy) | (int(vpos >= 480) << 1) |
-                    (int(hpos >= 640) << 2) | ((int(elapsed * 60) & 1) << 3) |
+                    (int(hpos >= 640) << 2) |
+                    ((self._hardware_frame & 1) << 3) |
                     (int(self.cursor_end) << 4))
         return 0
 
@@ -799,27 +910,28 @@ class TimerDevice:
     def __init__(self) -> None:
         self.flag_1ms = False
         self.flag_500ms = False
-        now = time.perf_counter()
-        self._last_1ms = now
-        self._last_500ms = now
+        self._phase_1024 = 0.0
+        self._phase_2 = 0.0
 
     def reset(self) -> None:
         self.flag_1ms = False
         self.flag_500ms = False
-        now = time.perf_counter()
-        self._last_1ms = now
-        self._last_500ms = now
+        self._phase_1024 = 0.0
+        self._phase_2 = 0.0
+
+    def advance_time(self, seconds: float) -> None:
+        self._phase_1024 += seconds * 1024.0
+        self._phase_2 += seconds * 2.0
+        if self._phase_1024 >= 1.0:
+            self.flag_1ms = True
+            self._phase_1024 %= 1.0
+        if self._phase_2 >= 1.0:
+            self.flag_500ms = True
+            self._phase_2 %= 1.0
 
     def update(self) -> None:
-        now = time.perf_counter()
-        if now - self._last_1ms >= 0.001:
-            self.flag_1ms = True
-            elapsed = now - self._last_1ms
-            self._last_1ms += int(elapsed / 0.001) * 0.001
-        if now - self._last_500ms >= 0.500:
-            self.flag_500ms = True
-            elapsed = now - self._last_500ms
-            self._last_500ms += int(elapsed / 0.500) * 0.500
+        """Compatibilidade: o tempo agora e fornecido pelo scheduler."""
+        return
 
     def read(
         self,
@@ -1165,7 +1277,6 @@ class Wall8Bus:
 
     def read8(self, address: int, side_effects: bool = True) -> int:
         address &= 0xFFFF
-        self.video.advance()
 
         # Overlay: com /BOOT_ROM_EN ativo, a BIOS responde em toda a metade baixa
         # 0000h..7FFFh. A0..A15 seguem diretamente o barramento, então não
@@ -1192,7 +1303,6 @@ class Wall8Bus:
     def write8(self, address: int, value: int) -> None:
         address &= 0xFFFF
         value &= 0xFF
-        self.video.advance()
 
         if self.boot_overlay and RAM_START <= address <= RAM_END:
             # A BIOS está selecionada e a 62256 fica desabilitada em toda
@@ -1214,6 +1324,11 @@ class Wall8Bus:
         self.last_address = address
         self.last_data = value
         self.last_access = "WRITE"
+
+    def advance_time(self, seconds: float) -> None:
+        """Avanca os perifericos que possuem osciladores independentes."""
+        self.video.advance_time(seconds)
+        self.timer.advance_time(seconds)
 
     def _read_io(self, address: int, side_effects: bool) -> int:
         address = self._normalize_io(address)
@@ -1315,6 +1430,7 @@ class Wall8CPU:
     def __init__(self, bus: Wall8Bus) -> None:
         self.bus = bus
         self.s = CPUState()
+        self.clock_hz = 1_000_000
         self.last_pc = 0
         self.last_text = "RESET"
 
@@ -1672,6 +1788,7 @@ class Wall8CPU:
         cycles = CYCLES[opcode]
         self.s.cycles += cycles
         self.s.instructions += 1
+        self.bus.advance_time(cycles / self.clock_hz)
         self.last_text, _ = self.disassemble(self.last_pc)
         return cycles
 
@@ -1771,11 +1888,17 @@ def build_demo_bios() -> bytes:
 
 class Wall8App:
     SPEEDS = {
+        "125 kHz": 125_000,
+        "250 kHz": 250_000,
+        "500 kHz": 500_000,
         "1 kHz": 1_000,
         "10 kHz": 10_000,
         "100 kHz": 100_000,
         "1 MHz": 1_000_000,
+        "2 MHz": 2_000_000,
         "4 MHz": 4_000_000,
+        "8 MHz": 8_000_000,
+        "16 MHz": 16_000_000,
     }
 
     TERMINAL_COLORS = {
@@ -1809,10 +1932,14 @@ class Wall8App:
         self.custom_clock_hz = 1_000_000
         self._cycle_credit = 0.0
         self._last_ui_time = self._last_tick
+        self._last_panel_time = self._last_tick
         self.keyboard_capture_active = False
         config = self._load_config()
         self.bios_dialog_dir = self._saved_file_parent(config.get("bios_path"))
         self.cart_dialog_dir = self._saved_file_parent(config.get("cart_path"))
+        self.char_rom_dialog_dir = self._saved_file_parent(
+            config.get("character_rom_path")
+        )
         self.terminal_color_name = self._load_terminal_color(config)
         self.startup_status = self._restore_saved_images(config)
 
@@ -1822,9 +1949,10 @@ class Wall8App:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self._build_ui()
+        self._update_terminal_frame_title()
         self._update_ui(force=True)
         self.root.after_idle(self._fit_window_to_fixed_video)
-        self.root.after(10, self._tick)
+        self.root.after(2, self._tick)
 
     def _build_ui(self) -> None:
         tk = self.tk
@@ -1832,20 +1960,25 @@ class Wall8App:
 
         toolbar = ttk.Frame(self.root, padding=6)
         toolbar.pack(fill="x")
+        execution_toolbar = ttk.Frame(toolbar)
+        execution_toolbar.pack(fill="x")
+        video_toolbar = ttk.Frame(toolbar)
+        video_toolbar.pack(fill="x", pady=(5, 0))
 
-        ttk.Button(toolbar, text="Carregar BIOS", command=self.load_bios).pack(side="left", padx=2)
-        ttk.Button(toolbar, text="Carregar Cart", command=self.load_cart).pack(side="left", padx=2)
-        ttk.Button(toolbar, text="Salvar Cart", command=self.save_cart).pack(side="left", padx=2)
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=6)
-        ttk.Button(toolbar, text="Reset", command=self.reset).pack(side="left", padx=2)
-        self.run_button = ttk.Button(toolbar, text="Run", command=self.toggle_run)
+        ttk.Button(execution_toolbar, text="Carregar BIOS", command=self.load_bios).pack(side="left", padx=2)
+        ttk.Button(execution_toolbar, text="Carregar Cart", command=self.load_cart).pack(side="left", padx=2)
+        ttk.Button(execution_toolbar, text="Salvar Cart", command=self.save_cart).pack(side="left", padx=2)
+        ttk.Button(execution_toolbar, text="Carregar Fonte", command=self.load_character_rom).pack(side="left", padx=2)
+        ttk.Separator(execution_toolbar, orient="vertical").pack(side="left", fill="y", padx=6)
+        ttk.Button(execution_toolbar, text="Reset", command=self.reset).pack(side="left", padx=2)
+        self.run_button = ttk.Button(execution_toolbar, text="Run", command=self.toggle_run)
         self.run_button.pack(side="left", padx=2)
-        ttk.Button(toolbar, text="Step", command=self.step_once).pack(side="left", padx=2)
+        ttk.Button(execution_toolbar, text="Step", command=self.step_once).pack(side="left", padx=2)
 
-        ttk.Label(toolbar, text="Clock:").pack(side="left", padx=(16, 4))
+        ttk.Label(execution_toolbar, text="Clock:").pack(side="left", padx=(16, 4))
         self.speed_var = tk.StringVar(value="1 MHz")
         speed = ttk.Combobox(
-            toolbar,
+            execution_toolbar,
             textvariable=self.speed_var,
             values=(*self.SPEEDS, "Personalizado"),
             width=12,
@@ -1854,12 +1987,12 @@ class Wall8App:
         speed.pack(side="left")
         self.custom_clock_var = tk.StringVar(value="1000000")
         self.custom_clock_entry = ttk.Entry(
-            toolbar, textvariable=self.custom_clock_var, width=9
+            execution_toolbar, textvariable=self.custom_clock_var, width=9
         )
         self.custom_clock_entry.pack(side="left", padx=(4, 2))
         self.custom_clock_unit_var = tk.StringVar(value="Hz")
         custom_clock_unit = ttk.Combobox(
-            toolbar,
+            execution_toolbar,
             textvariable=self.custom_clock_unit_var,
             values=("Hz", "kHz", "MHz"),
             width=5,
@@ -1871,10 +2004,10 @@ class Wall8App:
         self.custom_clock_entry.bind("<FocusIn>", self._use_custom_clock)
         self.custom_clock_entry.bind("<FocusOut>", self._use_custom_clock)
 
-        ttk.Label(toolbar, text="Resolução:").pack(side="left", padx=(14, 4))
+        ttk.Label(video_toolbar, text="Resolução:").pack(side="left", padx=(2, 4))
         self.video_resolution_var = tk.StringVar(value="Texto 80×30")
         video_resolution = ttk.Combobox(
-            toolbar,
+            video_toolbar,
             textvariable=self.video_resolution_var,
             values=("Texto 80×30", "GFX 320×240", "GFX 160×120"),
             width=14,
@@ -1886,17 +2019,17 @@ class Wall8App:
             self._set_video_resolution,
         )
 
-        # Zoom exclusivamente inteiro: replica cada pixel lógico sem alterar
-        # a resolução 640×480 nem reagir ao redimensionamento da janela.
-        ttk.Label(toolbar, text="Zoom de pixels:").pack(
+        # Escala fixa por vizinho mais proximo: nao existe interpolacao,
+        # margem ou alteracao na matriz de pixels produzida pela GPU.
+        ttk.Label(video_toolbar, text="Zoom de pixels:").pack(
             side="left",
             padx=(14, 4),
         )
         self.video_pixel_scale_var = tk.StringVar(value="1×")
         video_pixel_scale = ttk.Combobox(
-            toolbar,
+            video_toolbar,
             textvariable=self.video_pixel_scale_var,
-            values=("1×", "2×", "4×"),
+            values=("½×", "1×", "2×", "4×"),
             width=4,
             state="readonly",
         )
@@ -1905,13 +2038,13 @@ class Wall8App:
             "<<ComboboxSelected>>",
             self._set_video_pixel_scale,
         )
-        ttk.Label(toolbar, text="Cor do terminal:").pack(
+        ttk.Label(video_toolbar, text="Cor do terminal:").pack(
             side="left",
             padx=(14, 4),
         )
         self.terminal_color_var = tk.StringVar(value=self.terminal_color_name)
         terminal_color = ttk.Combobox(
-            toolbar,
+            video_toolbar,
             textvariable=self.terminal_color_var,
             values=tuple(self.TERMINAL_COLORS),
             width=8,
@@ -1919,31 +2052,44 @@ class Wall8App:
         )
         terminal_color.pack(side="left")
         terminal_color.bind("<<ComboboxSelected>>", self._set_terminal_color)
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(video_toolbar, text="Banco:").pack(side="left", padx=(10, 4))
+        self.character_bank_var = tk.StringVar(
+            value=f"{self.bus.video.character_bank:02b}"
+        )
+        character_bank = ttk.Combobox(
+            video_toolbar,
+            textvariable=self.character_bank_var,
+            values=("00", "01", "10", "11"),
+            width=3,
+            state="readonly",
+        )
+        character_bank.pack(side="left")
+        character_bank.bind("<<ComboboxSelected>>", self._set_character_bank)
+        ttk.Separator(video_toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         self.cart_connected_var = tk.BooleanVar(value=self.bus.cart_connected)
         ttk.Checkbutton(
-            toolbar,
+            video_toolbar,
             text="Cartucho conectado",
             variable=self.cart_connected_var,
             command=self._set_device_connections,
         ).pack(side="left", padx=2)
         self.video_connected_var = tk.BooleanVar(value=self.bus.video_connected)
         ttk.Checkbutton(
-            toolbar,
+            video_toolbar,
             text="Vídeo conectado",
             variable=self.video_connected_var,
             command=self._set_device_connections,
         ).pack(side="left", padx=2)
         self.keyboard_connected_var = tk.BooleanVar(value=self.bus.keyboard_connected)
         ttk.Checkbutton(
-            toolbar,
+            video_toolbar,
             text="Teclado conectado",
             variable=self.keyboard_connected_var,
             command=self._set_device_connections,
         ).pack(side="left", padx=2)
 
         self.status_var = tk.StringVar(value=self.startup_status or "Pronto")
-        ttk.Label(toolbar, textvariable=self.status_var).pack(side="right", padx=8)
+        ttk.Label(execution_toolbar, textvariable=self.status_var).pack(side="right", padx=8)
 
         main = ttk.Panedwindow(self.root, orient="horizontal")
         main.pack(fill="both", expand=True, padx=6, pady=(0, 6))
@@ -1961,15 +2107,9 @@ class Wall8App:
         terminal_frame = self.terminal_frame
         terminal_frame.pack(anchor="nw")
 
-        # Fonte raster fixa. Fixedsys ocupa 8 pixels de largura na altura 16,
-        # preservando a matriz horizontal de 8 pixels sem invadir a próxima
-        # célula; a grade física do texto continua sendo 80 x 30 células
-        # de 8 x 16 pixels.
-        self.video_font = self.tkfont.Font(
-            family="Fixedsys",
-            size=-16,
-        )
-        self.video_pixel_scale = 1
+        # A imagem do terminal vem exclusivamente dos bits da ROM. A escala
+        # abaixo afeta apenas a apresentacao no host.
+        self.video_pixel_scale = 1.0
 
         self.terminal = tk.Canvas(
             terminal_frame,
@@ -2136,6 +2276,32 @@ class Wall8App:
         except Exception as exc:
             self.messagebox.showerror("Erro ao carregar BIOS", str(exc))
 
+    def load_character_rom(self) -> None:
+        options = {
+            "title": "Selecione a ROM de caracteres 27C512",
+            "filetypes": [("Binário", "*.bin *.rom *.img"), ("Todos", "*.*")],
+        }
+        if self.char_rom_dialog_dir is not None:
+            options["initialdir"] = str(self.char_rom_dialog_dir)
+        path = self.filedialog.askopenfilename(**options)
+        if not path:
+            return
+        try:
+            self.char_rom_dialog_dir = Path(path).parent
+            self.bus.video.load_character_rom_file(path)
+            self._save_config_value(
+                "character_rom_path", str(Path(path).resolve())
+            )
+            self._update_terminal_frame_title()
+            self._update_terminal(force=True)
+            self.status_var.set(
+                f"ROM de caracteres: {Path(path).name} - 65536 bytes"
+            )
+        except Exception as exc:
+            self.messagebox.showerror(
+                "Erro ao carregar ROM de caracteres", str(exc)
+            )
+
     def load_cart(self) -> None:
         options = {
             "title": "Selecione o cartucho",
@@ -2208,6 +2374,32 @@ class Wall8App:
         )
         self._update_ui(force=True)
 
+    def _set_character_bank(self, _event=None) -> None:
+        bank_text = self.character_bank_var.get()
+        try:
+            bank = int(bank_text, 2)
+            self.bus.video.set_character_bank(bank)
+        except ValueError:
+            self.character_bank_var.set(f"{self.bus.video.character_bank:02b}")
+            return
+        self._update_terminal_frame_title()
+        self._update_terminal(force=True)
+        self.status_var.set(
+            f"Banco da fonte: A15:A14={bank:02b}"
+        )
+
+    def _update_terminal_frame_title(self) -> None:
+        mode = self.video_resolution_var.get()
+        bank = self.bus.video.character_bank
+        rom_path = self.bus.video.character_rom_path
+        rom_name = rom_path.name if rom_path is not None else "nenhuma ROM"
+        self.terminal_frame.configure(
+            text=(
+                f"Modo {mode} - saida fisica 640×480 - "
+                f"fonte {rom_name}, A15:A14={bank:02b}"
+            )
+        )
+
     def reset(self, start: bool = True) -> None:
         self.running = False
         self.bus.reset(clear_ram=True)
@@ -2232,6 +2424,7 @@ class Wall8App:
         self.running = False
         self.run_button.configure(text="Run")
         try:
+            self.cpu.clock_hz = self._selected_clock_hz()
             self.cpu.step()
         except Exception as exc:
             self._handle_cpu_error(exc)
@@ -2427,18 +2620,22 @@ class Wall8App:
         dt = min(0.1, max(0.0, now - self._last_tick))
         self._last_tick = now
 
-        self.bus.timer.update()
-
         if self.running and not self.cpu.s.halted:
             try:
                 selected = self._selected_clock_hz()
+                self.cpu.clock_hz = selected
                 self._cycle_credit += selected * dt
                 instructions = 0
                 while self._cycle_credit > 0 and instructions < 50_000 and not self.cpu.s.halted:
-                    self._cycle_credit -= self.cpu.step()
+                    cycles = self.cpu.step()
+                    self._cycle_credit -= cycles
                     instructions += 1
             except Exception as exc:
                 self._handle_cpu_error(exc)
+        else:
+            # GPU e timers possuem osciladores proprios e continuam ativos com
+            # a CPU pausada ou bloqueada por HLT.
+            self.bus.advance_time(dt)
 
         if self.cpu.s.halted:
             self.running = False
@@ -2452,11 +2649,14 @@ class Wall8App:
             self._last_rate_time = now
 
         self._frame_counter += 1
-        if now - self._last_ui_time >= 0.05:
+        if now - self._last_ui_time >= (1.0 / 60.0):
             self._last_ui_time = now
+            self._update_terminal()
+        if now - self._last_panel_time >= 0.05:
+            self._last_panel_time = now
             self._update_ui()
 
-        self.root.after(10, self._tick)
+        self.root.after(2, self._tick)
 
     VIDEO_MODES = {
         "Texto 80×30": (640, 240, 80, 30),
@@ -2469,32 +2669,33 @@ class Wall8App:
             self.video_resolution_var.get()
         ]
         self.bus.video.set_geometry(columns, rows)
-        self.terminal_frame.configure(
-            text=f"Modo {self.video_resolution_var.get()} — saída física 640×480 — 4:3"
-        )
+        self._update_terminal_frame_title()
         self._configure_video_canvas()
 
     def _configure_video_canvas(self) -> None:
-        logical_width, logical_height, _columns, _rows = self.VIDEO_MODES[
-            self.video_resolution_var.get()
-        ]
         scale = self.video_pixel_scale
-        self.video_font.configure(size=-(16 * scale))
         self.terminal.configure(
-            width=640 * scale,
-            height=480 * scale,
+            width=int(640 * scale),
+            height=int(480 * scale),
         )
         self.bus.video.dirty = True
         self.root.after_idle(self._fit_window_to_fixed_video)
 
     def _set_video_pixel_scale(self, _event=None) -> None:
-        """Aplica zoom inteiro e fixo, sem mudar a resolução emulada."""
-        scale = {"1×": 1, "2×": 2, "4×": 4}.get(
+        """Escala a apresentacao sem mudar os pixels produzidos pela GPU."""
+        scale = {"½×": 0.5, "1×": 1.0, "2×": 2.0, "4×": 4.0}.get(
             self.video_pixel_scale_var.get(),
-            1,
+            1.0,
         )
         self.video_pixel_scale = scale
         self._configure_video_canvas()
+
+    def _scale_video_image(self, image):
+        """Usa somente replicacao/subamostragem inteira, sem interpolacao."""
+        if self.video_pixel_scale == 0.5:
+            return image.subsample(2, 2)
+        factor = int(self.video_pixel_scale)
+        return image if factor == 1 else image.zoom(factor, factor)
 
     def _load_config(self) -> dict:
         """Lê as preferências persistentes do emulador."""
@@ -2509,10 +2710,16 @@ class Wall8App:
         restored = []
         unavailable = []
 
-        # Um arquivo informado explicitamente por --bios/--cart tem prioridade.
+        # Um arquivo informado explicitamente pela linha de comando tem prioridade.
         for label, key, current_path, loader in (
             ("BIOS", "bios_path", self.bus.bios_path, self.bus.load_bios_file),
             ("cartucho", "cart_path", self.bus.cart_path, self.bus.load_cart_file),
+            (
+                "ROM de caracteres",
+                "character_rom_path",
+                self.bus.video.character_rom_path,
+                self.bus.video.load_character_rom_file,
+            ),
         ):
             if current_path is not None:
                 continue
@@ -2528,6 +2735,22 @@ class Wall8App:
                 restored.append(f"{label}: {path.name}")
             except (OSError, ValueError) as exc:
                 unavailable.append(f"falha na {label}: {exc}")
+
+        # Na primeira execucao, usa automaticamente o arquivo produzido pelo
+        # Gerador_ROM_Caracteres.py que acompanha o emulador.
+        if self.bus.video.character_rom_path is None:
+            if DEFAULT_CHAR_ROM_PATH.is_file():
+                try:
+                    self.bus.video.load_character_rom_file(DEFAULT_CHAR_ROM_PATH)
+                    restored.append(
+                        f"ROM de caracteres: {DEFAULT_CHAR_ROM_PATH.name}"
+                    )
+                except (OSError, ValueError) as exc:
+                    unavailable.append(f"falha na ROM de caracteres padrao: {exc}")
+            else:
+                unavailable.append(
+                    f"ROM de caracteres nao encontrada: {DEFAULT_CHAR_ROM_PATH.name}"
+                )
 
         messages = restored + unavailable
         return "; ".join(messages)
@@ -2616,12 +2839,7 @@ class Wall8App:
             # A BIOS também pode selecionar o modo escrevendo $10/$11/$12 em
             # VIDEO_CMD. Mantém o seletor e o Canvas sincronizados com ela.
             self.video_resolution_var.set(expected_mode)
-            logical_width, logical_height, columns, rows = self.VIDEO_MODES[
-                expected_mode
-            ]
-            self.terminal_frame.configure(
-                text=f"Modo {expected_mode} — saída física 640×480 — 4:3"
-            )
+            self._update_terminal_frame_title()
             self._configure_video_canvas()
 
         if not self.bus.video.dirty and not force:
@@ -2631,6 +2849,8 @@ class Wall8App:
         # quais linhas devem estar na superfície e redesenhá-las pela GPU.
         canvas = self.terminal
         canvas.delete("all")
+        # A imagem e apresentada a 60 Hz; a emulacao da GPU continua no clock
+        # independente de 25,175 MHz entre duas apresentacoes.
         if self.bus.video.mode != VideoDevice.MODE_TEXT:
             logical_width = self.bus.video.logical_width
             logical_height = self.bus.video.logical_height
@@ -2643,63 +2863,56 @@ class Wall8App:
                 line = self.bus.video.vram[y * stride:(y + 1) * stride]
                 colors = []
                 for value in line:
-                    colors.extend(on if value & (0x80 >> bit) else off
+                    colors.extend(on if value & (1 << bit) else off
                                   for bit in range(8))
                 rows.append("{" + " ".join(colors) + "}")
             image.put(" ".join(rows))
             physical_scale = 2 if self.bus.video.mode == VideoDevice.MODE_GFX_320 else 4
-            self._video_image = image.zoom(physical_scale * self.video_pixel_scale)
+            self._video_logical_image = image
+            self._video_physical_image = image.zoom(physical_scale, physical_scale)
+            self._video_image = self._scale_video_image(self._video_physical_image)
             canvas.create_image(0, 0, image=self._video_image, anchor="nw")
             self.bus.video.dirty = False
             return
 
-        cell_width = 8 * self.video_pixel_scale
-        cell_height = 16 * self.video_pixel_scale
-        first_row_offset = 0
-
-        # Cada caractere ocupa uma célula lógica quadrada de 8×8. As posições
-        # cobrem exatamente a grade selecionada, sem padding ou área ociosa.
-        for row_index, row in enumerate(self.bus.video.cells):
-            # Apenas a primeira linha recebe a folga visual do topo. Deslocar
-            # toda a grade faria a última linha ultrapassar a resolução por
-            # dois pixels lógicos (por exemplo, 242 em uma tela de 240).
-            y = (row_index + 0.5) * cell_height
-            if row_index == 0:
-                y += first_row_offset
-            for column_index, char in enumerate(row):
-                if char != " ":
-                    canvas.create_text(
-                        (column_index + 0.5) * cell_width,
-                        y,
-                        text=char,
-                        font=self.video_font,
-                        fill=self.TERMINAL_COLORS[self.terminal_color_name],
-                        anchor="center",
-                    )
-
-        if self.bus.video.cursor_visible:
-            x0 = self.bus.video.x * cell_width
-            y0 = self.bus.video.y * cell_height
-            if self.bus.video.y == 0:
-                y0 += first_row_offset
-            canvas.create_rectangle(
-                x0,
-                y0,
-                x0 + cell_width,
-                y0 + cell_height,
-                fill=self.TERMINAL_COLORS[self.terminal_color_name],
-                outline="",
+        # Modo texto: simula a leitura real da 27C512. Cada codigo da VRAM
+        # seleciona A0..A7, a linha do glifo seleciona A8..A10 e o banco
+        # seleciona A14..A15. D0 sai primeiro, no pixel esquerdo. Nao existe
+        # fonte do sistema, centralizacao, padding ou margem acrescentada aqui.
+        on = self.TERMINAL_COLORS[self.terminal_color_name]
+        off = "#071007"
+        on_rgb = bytes(int(on[index:index + 2], 16) for index in (1, 3, 5))
+        off_rgb = bytes(int(off[index:index + 2], 16) for index in (1, 3, 5))
+        # Cada entrada ja contem os oito pixels RGB de um possivel byte da ROM.
+        pixel_lut = tuple(
+            b"".join(
+                on_rgb if value & (1 << bit) else off_rgb
+                for bit in range(8)
             )
-            char = self.bus.video.cells[self.bus.video.y][self.bus.video.x]
-            if char != " ":
-                canvas.create_text(
-                    x0 + cell_width / 2,
-                    y0 + cell_height / 2,
-                    text=char,
-                    font=self.video_font,
-                    fill="#071007",
-                    anchor="center",
-                )
+            for value in range(256)
+        )
+        bitmap = bytearray()
+        cursor_x = self.bus.video.x
+        cursor_y = self.bus.video.y
+        cursor_visible = self.bus.video.cursor_visible
+        for text_row in range(30):
+            row_base = text_row * 80
+            character_codes = self.bus.video.vram[row_base:row_base + 80]
+            for glyph_row in range(8):
+                for column, character in enumerate(character_codes):
+                    value = self.bus.video.character_row(character, glyph_row)
+                    if cursor_visible and column == cursor_x and text_row == cursor_y:
+                        value ^= 0xFF
+                    bitmap.extend(pixel_lut[value])
+        ppm = b"P6\n640 240\n255\n" + bytes(bitmap)
+        image = self.tk.PhotoImage(data=ppm, format="PPM")
+
+        # A ROM continua sendo 8x8. Somente depois de formar os 640x240 pixels
+        # logicos a GPU repete cada linha duas vezes, chegando a 640x480.
+        self._video_logical_image = image
+        self._video_physical_image = image.zoom(1, 2)
+        self._video_image = self._scale_video_image(self._video_physical_image)
+        canvas.create_image(0, 0, image=self._video_image, anchor="nw")
 
         self.bus.video.dirty = False
 
@@ -2930,7 +3143,9 @@ class Wall8App:
             f"/KEYBOARD_DETECT={(status_raw >> 6) & 1}\n"
             f"Cartucho: {cart}    Boot overlay: {'ON' if self.bus.boot_overlay else 'OFF'}\n"
             f"BIOS EPROM: {self.bus.bios_load_mode}\n"
-            f"Cart EPROM: {self.bus.cart_load_mode}"
+            f"Cart EPROM: {self.bus.cart_load_mode}\n"
+            f"Char EPROM: {self.bus.video.character_rom_load_mode}; "
+            f"A15:A14={self.bus.video.character_bank:02b}"
         )
 
         # Disassembly
@@ -2997,6 +3212,29 @@ class Wall8App:
 def run_self_tests() -> None:
     bus = Wall8Bus(audio_enabled=False)
     cpu = Wall8CPU(bus)
+
+    # ROM de caracteres: A0..A7=codigo, A8..A10=linha,
+    # A11..A13=0 e A14..A15=banco.
+    assert VideoDevice.character_rom_address(0, 0x45, 0) == 0x0045
+    assert VideoDevice.character_rom_address(0, 0x45, 7) == 0x0745
+    assert VideoDevice.character_rom_address(1, 0x45, 0) == 0x4045
+    assert VideoDevice.character_rom_address(2, 0x45, 0) == 0x8045
+    assert VideoDevice.character_rom_address(3, 0xFF, 7) == 0xC7FF
+    test_character_rom = bytearray(CHAR_ROM_SIZE)
+    test_character_rom[0x0045] = 0x7E
+    test_character_rom[0x0145] = 0x06
+    test_character_rom[0x4045] = 0x18
+    bus.video.load_character_rom_bytes(test_character_rom)
+    assert bus.video.character_row(0x45, 0) == 0x7E
+    assert bus.video.character_row(0x45, 1) == 0x06
+    bus.video.set_character_bank(1)
+    assert bus.video.character_row(0x45, 0) == 0x18
+    bus.video.set_character_bank(0)
+    try:
+        bus.video.load_character_rom_bytes(b"\x00" * 2048)
+        raise AssertionError("ROM de caracteres curta foi aceita")
+    except ValueError:
+        pass
 
     # ALU
     assert cpu._add8(0xFF, 0x01) == (0x00, 1, 0)
@@ -3200,14 +3438,14 @@ def run_self_tests() -> None:
     assert bus.video.read_register(4) & 0x10
     bus.video.vram[2400] = 0x5A
     bus.write8(VIDEO_BASE + 1, 0x00)
-    bus.video.advance()
+    bus.advance_time(0.010)
     assert not any(bus.video.vram[:2400])
     assert bus.video.vram[2400] == 0x5A
 
     # Retorna ao texto para os testes da BIOS demonstrativa.
     bus.write8(VIDEO_BASE + 1, 0x11)
     bus.write8(VIDEO_BASE + 1, 0x00)
-    bus.video.advance()
+    bus.advance_time(0.010)
     assert not bus.video.cursor_end
     assert (bus.video.x, bus.video.y) == (0, 0)
 
@@ -3259,6 +3497,10 @@ def parse_args() -> argparse.Namespace:
         "--cart-offset", type=_parse_number, default=None,
         help="offset físico para imagem parcial do cartucho, por exemplo 0xA000",
     )
+    parser.add_argument(
+        "--char-rom",
+        help="imagem completa de 64 KiB da 27C512 de caracteres",
+    )
     parser.add_argument("--no-audio", action="store_true", help="desativa backend de áudio")
     parser.add_argument("--self-test", action="store_true", help="executa autotestes e encerra")
     return parser.parse_args()
@@ -3280,6 +3522,8 @@ def main() -> int:
             bus.load_bios_bytes(build_demo_bios())
         if args.cart:
             bus.load_cart_file(args.cart, args.cart_offset)
+        if args.char_rom:
+            bus.video.load_character_rom_file(args.char_rom)
         bus.reset(clear_ram=True)
         cpu.reset()
 

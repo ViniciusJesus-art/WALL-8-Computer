@@ -482,7 +482,7 @@ Enquanto `BUSY=1`, o software pode ler `VIDEO_STATUS`, mas não deve alterar `VI
 | Gráfico 320×240 | `0-39` | `0-239` | 8 pixels por byte; 40 bytes por linha |
 | Gráfico 160×120 | `0-19` | `0-119` | 8 pixels por byte; 20 bytes por linha |
 
-Nos modos gráficos, o bit 7 é o pixel mais à esquerda do grupo e o bit 0 é o mais à direita.
+Nos modos gráficos, o bit 0 é o pixel mais à esquerda do grupo e o bit 7 é o mais à direita.
 
 ### Polling de `BUSY`
 

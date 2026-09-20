@@ -322,11 +322,11 @@ Cada byte gráfico contém oito pixels lógicos. Como cada pixel é repetido dua
 A sequência horizontal é:
 
 ```text
-bit 7 → dois clocks
-bit 6 → dois clocks
-bit 5 → dois clocks
-...
 bit 0 → dois clocks
+bit 1 → dois clocks
+bit 2 → dois clocks
+...
+bit 7 → dois clocks
 ```
 
 Depois dos 16 clocks, a GPU carrega o próximo byte da VRAM no registrador temporário de pixels.
@@ -623,21 +623,21 @@ Assim, o primeiro e o oitavo pixels do grupo ficam acesos.
 A ordem oficial é:
 
 ```text
-bit 7 = pixel mais à esquerda
-bit 6 = segundo pixel
-bit 5 = terceiro pixel
-bit 4 = quarto pixel
-bit 3 = quinto pixel
-bit 2 = sexto pixel
-bit 1 = sétimo pixel
-bit 0 = pixel mais à direita
+bit 0 = pixel mais à esquerda
+bit 1 = segundo pixel
+bit 2 = terceiro pixel
+bit 3 = quarto pixel
+bit 4 = quinto pixel
+bit 5 = sexto pixel
+bit 6 = sétimo pixel
+bit 7 = pixel mais à direita
 ```
 
 | Valor | Pixels |
 |---:|---|
 | `$00` | todos apagados |
-| `$80` | somente o primeiro aceso |
-| `$01` | somente o último aceso |
+| `$01` | somente o primeiro aceso |
+| `$80` | somente o último aceso |
 | `$FF` | todos acesos |
 | `$AA` | padrão alternado `10101010` |
 | `$55` | padrão alternado `01010101` |
@@ -1111,7 +1111,8 @@ Cada caractere usa oito bytes:
 8 linhas × 1 byte por linha = 8 bytes
 ```
 
-Cada bit representa um pixel da linha.
+Cada bit representa um pixel da linha. Na ordem visual da esquerda para a
+direita, a ROM fornece `D0, D1, ... D7`.
 
 Exemplo da letra `A`:
 
@@ -1145,12 +1146,14 @@ Uma fonte com 256 caracteres ocupa:
 256 × 8 = 2.048 bytes
 ```
 
-Uma EPROM `27C512` possui 65.536 bytes e pode armazenar até 32 fontes completas de 256 caracteres. Na primeira versão, somente o banco inicial precisa ser utilizado.
+Uma EPROM `27C512` possui 65.536 bytes. Com `A11..A13` em GND e `A14..A15`
+selecionáveis, o circuito atual acessa quatro bancos de 256 caracteres. Na
+primeira versão, somente o banco `A15:A14=00` precisa ser utilizado.
 
 ### Endereço da ROM de fonte
 
 ```text
-endereço_fonte = código_do_caractere × 8 + linha_interna
+endereço_fonte = (banco << 14) | (linha_interna << 8) | código_do_caractere
 ```
 
 Onde:
@@ -1158,6 +1161,12 @@ Onde:
 ```text
 código_do_caractere = byte lido da VRAM
 linha_interna       = 0 até 7
+banco               = A15:A14, de 0 até 3
+
+A0..A7   = código_do_caractere
+A8..A10  = linha_interna
+A11..A13 = 000, ligados ao GND
+A14..A15 = banco
 ```
 
 ---
@@ -2084,7 +2093,7 @@ O byte lido é o código do caractere.
 Depois:
 
 ```text
-endereço da fonte = código × 8 + linha_interna
+endereço da fonte = (banco << 14) | (linha_interna << 8) | código
 ```
 
 O byte da fonte entra em um shift register e seus bits geram os pixels.
@@ -2381,7 +2390,7 @@ Os bits superiores da EPROM podem permanecer fixos ou ser reservados para bancos
 9. Em texto, `VIDEO_X` é uma coluna de caractere.
 10. Em gráfico, `VIDEO_X` é uma coluna de byte, não uma coordenada de pixel.
 11. Uma escrita gráfica controla oito pixels horizontais.
-12. O bit 7 representa o pixel mais à esquerda.
+12. O bit 0 representa o pixel mais à esquerda.
 13. Escritas concluídas em `VIDEO_DATA` incrementam a posição automaticamente.
 14. Leituras de VRAM são solicitadas com `VIDEO_CMD = $20` e não incrementam a posição.
 15. `LDA VIDEO_DATA` retorna o resultado da última leitura concluída, não inicia sozinho um acesso assíncrono à SRAM.

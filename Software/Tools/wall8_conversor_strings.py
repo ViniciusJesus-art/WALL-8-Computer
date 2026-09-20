@@ -38,6 +38,10 @@ HEX_TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 
+WALL8_TEXT_COLUMNS = 80
+WALL8_TEXT_ROWS = 30
+WALL8_TEXT_FONT = ("Consolas", 11)
+
 
 def text_to_asm(
     text: str,
@@ -47,6 +51,9 @@ def text_to_asm(
     encoding: str = "latin-1",
 ) -> str:
     """Converte texto em diretivas #d8."""
+    # O editor Tk usa LF para mudar de linha, enquanto o terminal WALL-8 usa CR.
+    # Normalize antes de codificar para preservar o desenho mostrado na grade.
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r")
     try:
         data = bytearray(text.encode(encoding))
     except UnicodeEncodeError as exc:
@@ -115,7 +122,9 @@ def asm_to_text(
         if null_index >= 0:
             data = data[:null_index]
 
-    return data.decode(encoding, errors="replace")
+    text = data.decode(encoding, errors="replace")
+    # CR (0x0D) e CR+LF do WALL-8 precisam virar uma quebra real no tk.Text.
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 class Wall8StringConverter(tk.Tk):
@@ -130,6 +139,11 @@ class Wall8StringConverter(tk.Tk):
         self.bytes_per_line = tk.IntVar(value=16)
 
         self._build_ui()
+        self.update_idletasks()
+        required_width = self.winfo_reqwidth()
+        required_height = self.winfo_reqheight()
+        self.geometry(f"{max(1100, required_width)}x{max(680, required_height)}")
+        self.minsize(required_width, required_height)
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=10)
@@ -162,18 +176,26 @@ class Wall8StringConverter(tk.Tk):
         panes = ttk.Panedwindow(root, orient="horizontal")
         panes.pack(fill="both", expand=True)
 
-        left = ttk.LabelFrame(panes, text="Texto normal", padding=6)
+        left = ttk.LabelFrame(
+            panes,
+            text="Texto normal (tela WALL-8: 80 x 30)",
+            padding=6,
+        )
         right = ttk.LabelFrame(panes, text="Matriz para o ASM", padding=6)
-        panes.add(left, weight=1)
+        panes.add(left, weight=0)
         panes.add(right, weight=1)
 
         self.text_input = tk.Text(
             left,
-            wrap="word",
-            font=("Consolas", 11),
+            width=WALL8_TEXT_COLUMNS,
+            height=WALL8_TEXT_ROWS,
+            wrap="char",
+            font=WALL8_TEXT_FONT,
             undo=True,
         )
-        self.text_input.pack(fill="both", expand=True)
+        # Nao permita que o gerenciador de geometria altere a grade visivel:
+        # cada celula da fonte monoespacada representa uma celula da tela WALL-8.
+        self.text_input.pack(anchor="nw")
 
         self.asm_input = tk.Text(
             right,
