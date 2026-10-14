@@ -9,6 +9,8 @@
 
 </div>
 
+[← Voltar ao README](../../README.md) · [Referência de hardware da CPU](../wall8_CPU_Hardware.md) · [Esquema eletrônico da GPU](Hardware_GPU_Completo.pdf)
+
 ![Visual Completo da PCB](PCB_GPU_3D.png)
 
 ## Especificações rápidas

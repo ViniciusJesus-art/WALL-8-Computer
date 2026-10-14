@@ -1,10 +1,10 @@
 # WALL-8 — Referência de Hardware e Microarquitetura
 
-[← Voltar ao README](../README.md) · [Referência da ISA e programação](../Software/wall8_instrucoes.md) · [Esquema eletrônico](Hardware_Completo.pdf)
+[← Voltar ao README](../README.md) · [Referência da ISA e programação](../Software/wall8_instrucoes.md) · [Esquema eletrônico](Hardware_CPU_Completo.pdf)
 
 Este documento descreve o hardware do WALL-8 no nível necessário para compreender, montar, depurar e expandir a máquina. Ele reúne características elétricas, clocks, barramentos, registradores, memória, I/O, conectores, palavra de microcódigo e a sequência de microsteps dos 76 opcodes.
 
-O arquivo [`Hardware_Completo.pdf`](Hardware_Completo.pdf) continua sendo a fonte visual do esquema elétrico. O [manual técnico consolidado](../WALL-8_Manual_de_Referencia_Tecnica_Rev1.1.pdf) é a referência preparada para impressão. Em caso de alteração do projeto, o esquema, o gerador de microcódigo e este documento devem receber a mesma revisão.
+O arquivo [`Hardware_CPU_Completo.pdf`](Hardware_CPU_Completo.pdf) continua sendo a fonte visual do esquema elétrico. O [manual técnico consolidado — revisão 1.3](../WALL-8_Manual_de_Referencia_Tecnica_Rev1.3.odt) é a referência consolidada em formato ODT. Em caso de alteração do projeto, o esquema, o gerador de microcódigo e este documento devem receber a mesma revisão.
 
 > **Convenção de nomes:** sinais iniciados por `/` são ativos em nível baixo. Sinais sem `/` são ativos em nível alto ou representam barramentos/campos binários normais.
 
@@ -921,13 +921,13 @@ O sinal mono é duplicado nos contatos de tip e ring. A saída é passiva e deve
 
 | Arquivo | Papel |
 |---|---|
-| [`Hardware_Completo.pdf`](Hardware_Completo.pdf) | Esquema eletrônico |
+| [`Hardware_CPU_Completo.pdf`](Hardware_CPU_Completo.pdf) | Esquema eletrônico |
 | [`Software/Gerador_Microcodigo.py`](../Software/Gerador_Microcodigo.py) | Fonte normativa dos sinais e microsteps |
 | [`Software/wall8.cpu`](../Software/wall8.cpu) | Codificação da ISA para o customasm |
 | [`Software/wall8_instrucoes.md`](../Software/wall8_instrucoes.md) | Uso dos opcodes, ciclos e programação |
 | [`Software/source_file_dispDec/7Seg.py`](../Software/source_file_dispDec/7Seg.py) | Conteúdo lógico das EPROMs dos displays |
-| [`Software/wall8_placa_video.md`](../Software/wall8_placa_video.md) | Especificação detalhada da GPU |
-| [`WALL-8_Manual_de_Referencia_Tecnica_Rev1.1.pdf`](../WALL-8_Manual_de_Referencia_Tecnica_Rev1.1.pdf) | Manual consolidado para consulta e impressão |
+| [`Hardware/GPU/wall8_GPU_Hardware.md`](GPU/wall8_GPU_Hardware.md) | Especificação detalhada da GPU |
+| [`WALL-8_Manual_de_Referencia_Tecnica_Rev1.3.odt`](../WALL-8_Manual_de_Referencia_Tecnica_Rev1.3.odt) | Manual consolidado da CPU em formato ODT |
 
 Projeto e arquitetura: **Vinicius Dias de Jesus**.
 

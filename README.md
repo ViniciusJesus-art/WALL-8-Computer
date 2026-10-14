@@ -49,7 +49,6 @@ Caso tenha interesse fiz tambem um emulador dele em python 3.14 presente no repo
 - [Programando o WALL-8](#programando-o-wall-8)
 - [Arquivos e ferramentas do projeto](#arquivos-e-ferramentas-do-projeto)
 - [Documentação](#documentação)
-- [Estado atual e próximos passos](#estado-atual-e-próximos-passos)
 - [Créditos](#créditos)
 
 ## O que é o WALL-8
@@ -613,7 +612,7 @@ A pasta [`Software/BIOS`](Software/BIOS/) contém duas versões com finalidades 
 | Arquivo | Finalidade |
 |---|---|
 | `bios_default.asm` | BIOS mínima, usada como ponto de partida para um programa simples, equivalente a um “Hello World” do WALL-8 |
-| `wall8_bios_v1_320x240.asm` | BIOS principal, com terminal e suporte ao sistema de vídeo 320×240 |
+| [`wall8_bios_monitor_v5.asm`](Software/BIOS/wall8_bios_monitor_v5.asm) | BIOS principal, com monitor e terminal |
 
 Os arquivos `.bin` correspondentes ficam na mesma pasta e podem ser regenerados pelo `build.bat`.
 
@@ -651,11 +650,13 @@ O [`Software/Checkup`](Software/Checkup/) é o programa de diagnóstico geral do
 
 ## Documentação
 
-- [Manual de Referência Técnica](WALL-8_Manual_de_Referencia_Tecnica_Rev1.1.pdf) — documento consolidado em formato de datasheet;
+- [Manual de Referência Técnica da CPU — revisão 1.3](WALL-8_Manual_de_Referencia_Tecnica_Rev1.3.odt) — documento consolidado em formato ODT;
+- [Manual de Referência Técnica da GPU — revisão 1.0](Hardware/GPU/WALL-8_GPU_Manual_de_Referencia_Tecnica_Rev1.0.odt) — documento consolidado em formato ODT;
 - [Referência completa das instruções](Software/wall8_instrucoes.md) — opcodes, bytes, ciclos, flags e exemplos;
 - [Especificação da placa de vídeo](Hardware/GPU/wall8_GPU_Hardware.md) — protocolo, registradores, modos e arquitetura da GPU;
 - [Guia do Checkup](Software/Checkup/wall8_checkup_completo_v1_guia.md) — sequência de testes do diagnóstico geral;
 - [Esquema eletrônico completo](Hardware/Hardware_CPU_Completo.pdf) — folhas exportadas do Proteus;
+- [Esquema eletrônico completo da GPU](Hardware/GPU/Hardware_GPU_Completo.pdf) — folhas exportadas do Proteus;
 - [Fluxograma da arquitetura](fluxograma_A4_horizontal.pdf) — visão gráfica em formato A4.
 
 

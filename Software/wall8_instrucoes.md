@@ -1,10 +1,10 @@
 # WALL-8 — Referência da ISA
 
-[← Voltar para a apresentação do WALL-8](../README.md) · [Referência de hardware e microarquitetura](../Hardware/wall8_hardware.md)
+[← Voltar para a apresentação do WALL-8](../README.md) · [Referência de hardware e microarquitetura](../Hardware/wall8_CPU_Hardware.md)
 
 Esta é a referência prática dos **76 opcodes** definidos na revisão atual de [`wall8.cpu`](wall8.cpu).
 
-O documento mostra a sintaxe aceita pelo montador, os bytes produzidos, a quantidade de ciclos, o efeito de cada instrução e as alterações visíveis em flags e registradores. A apresentação do projeto está no [`README.md`](../README.md); os sinais elétricos, bits das ROMs e microsteps estão em [`Hardware/wall8_hardware.md`](../Hardware/wall8_hardware.md).
+O documento mostra a sintaxe aceita pelo montador, os bytes produzidos, a quantidade de ciclos, o efeito de cada instrução e as alterações visíveis em flags e registradores. A apresentação do projeto está no [`README.md`](../README.md); os sinais elétricos, bits das ROMs e microsteps estão em [`Hardware/wall8_CPU_Hardware.md`](../Hardware/wall8_CPU_Hardware.md).
 
 ## Sumário
 
