@@ -383,7 +383,7 @@ Dentro de cada página:
 - teclado, status e som não decodificam offsets;
 - display usa `A0`: par seleciona LOW, ímpar seleciona HIGH;
 - configuração usa `A0`: par seleciona CPU, ímpar seleciona periféricos;
-- vídeo decodifica `A7-A0` para os cinco registradores iniciais.
+- vídeo decodifica `A2-A0` para os oito offsets de `0xF200-0xF207`, repetidos a cada oito bytes nas páginas `0xF2xx` e `0xFAxx`.
 - `CART_IO` é encaminhado ao conector; a decodificação de `A7-A0` e o significado dos offsets pertencem ao hardware do cartucho.
 
 ## 9. Registradores de I/O
@@ -418,45 +418,62 @@ São registradores somente de escrita, sem readback.
 
 | Endereço | Nome | Acesso | Função |
 |---|---|:---:|---|
-| `0xF200` | `VIDEO_DATA` | R/W | Transferência de dados e resultado de leitura |
-| `0xF201` | `VIDEO_CMD` | W | Comando completo |
-| `0xF202` | `VIDEO_X` | R/W | Posição horizontal |
-| `0xF203` | `VIDEO_Y` | R/W | Posição vertical |
-| `0xF204` | `VIDEO_STATUS` | R | Estado da interface |
+| `0xF200` | `VIDEO_DATA` | R/W | Escrita solicita gravar um byte em X/Y; leitura devolve a última leitura de VRAM concluída. |
+| `0xF201` | `VIDEO_CTRL` | W | Configuração persistente de modo, páginas, cursor, incremento e banco de caracteres; sem leitura de retorno. |
+| `0xF202` | `VIDEO_X` | W | Coluna de caractere no texto ou coluna de byte nos gráficos; sem leitura de retorno. |
+| `0xF203` | `VIDEO_Y` | W | Linha da próxima operação; sem leitura de retorno. |
+| `0xF204` | `VIDEO_STATUS` | R | `BUSY` no bit 0 e `CURSOR_END` no bit 4; os demais bits retornam zero. |
+| `0xF205` | `READ_REQ` | W | Qualquer escrita solicita ler a VRAM em X/Y; o byte escrito é ignorado. |
+| `0xF206` | `CLEAR_REQ` | W | Qualquer escrita solicita CLEAR na página acessada pela CPU; o byte escrito é ignorado. |
+| `0xF207` | `CURSOR_END_RESET` | W | Qualquer escrita limpa `CURSOR_END`, sem alterar X/Y; o byte escrito é ignorado. |
 
-`VIDEO_STATUS`:
+Os oito offsets aparecem em `0xF200-0xF207` e no espelho `0xFA00-0xFA07`. A GPU decodifica somente `A2-A0`: os mesmos offsets se repetem a cada oito bytes dentro de cada página de vídeo. A VRAM é acessada indiretamente por X/Y/DATA; não ocupa uma janela direta no espaço de memória da CPU.
+
+#### 9.3.1 `VIDEO_CTRL` — `0xF201`
 
 | Bit | Nome | Significado |
 |---:|---|---|
-| 0 | `BUSY` | Interface reservada por uma operação |
-| 1 | `VBLANK` | Intervalo vertical |
-| 2 | `HBLANK` | Intervalo horizontal |
-| 3 | `FRAME` | Alterna a cada quadro |
-| 4 | `CURSOR_END` | Última posição válida alcançada |
-| 5-7 | reservado | Retornam zero |
+| 0 | `MODE_B0` | Bit 0 da seleção de modo. |
+| 1 | `MODE_B1` | Bit 1 da seleção de modo. |
+| 2 | `DOUBLE_BUFFER_EN` | 0: CPU e vídeo usam a página 0. 1: vídeo usa a página frontal e CPU acessa a página oposta. |
+| 3 | `DISPLAY_PAGE` | Página solicitada para exibição, 0 ou 1; a seleção é aplicada no início do `VBLANK`. |
+| 4 | `CURSOR_VISIBLE` | 1 habilita o cursor piscante no texto; 0 oculta o cursor. |
+| 5 | `AUTO_INCREMENT` | 1 avança X/Y após cada escrita em `VIDEO_DATA`; 0 mantém a posição. |
+| 6 | `Char_Bank_14` | Bit 0 do banco de caracteres da ROM, usado no modo texto. |
+| 7 | `Char_Bank_15` | Bit 1 do banco de caracteres da ROM, usado no modo texto. |
 
-Enquanto `BUSY=1`, a CPU não deve alterar `VIDEO_X`, `VIDEO_Y`, `VIDEO_DATA` nem iniciar outro comando de VRAM.
+`VIDEO_CTRL` substitui todos os oito bits a cada escrita e não possui valor de reset garantido. Inicialize-o explicitamente e mantenha uma cópia em RAM para alterar campos preservando os demais. `MODE_B1:MODE_B0` = 00 seleciona texto 80 x 30; 01, gráfico 320 x 240; 10, gráfico 160 x 120; 11 não é um modo implementado. Os bits 7:6 selecionam um dos quatro bancos de caracteres da ROM.
 
-Comandos iniciais de `VIDEO_CMD`:
+Com `DOUBLE_BUFFER_EN`=1, a VRAM é dividida em duas páginas de 16 KiB: a CPU lê, escreve e limpa a página oposta à exibida. `DISPLAY_PAGE` é uma solicitação aplicada no `VBLANK`; `VIDEO_STATUS` não confirma a página ativa, e `BUSY` não sinaliza nem confirma essa troca. Com `DOUBLE_BUFFER_EN`=0, ambos acessam a página 0.
 
-| Valor | Nome | Função |
+#### 9.3.2 `VIDEO_STATUS` — `0xF204`
+
+| Bit | Nome | Significado |
 |---:|---|---|
-| `0x00` | `VIDEO_CLEAR` | Limpa a área utilizada pelo modo atual |
-| `0x04` | `CURSOR_HIDE` | Esconde o cursor no modo texto |
-| `0x05` | `CURSOR_SHOW` | Mostra o cursor no modo texto |
-| `0x11` | `MODE_TEXT_80X30` | Texto 80×30, fonte 8×8 e escala 2× apenas na vertical |
-| `0x12` | `MODE_GFX_320X240` | Gráfico 320×240 monocromático, escala 2× |
-| `0x13` | `MODE_GFX_160X120` | Gráfico 160×120 monocromático, escala 4× |
-| `0x20` | `VRAM_READ` | Solicita leitura na posição X/Y |
+| 0 | `BUSY` | 1 indica leitura, escrita ou CLEAR pendente/em execução; aguarde zero antes da próxima operação. |
+| 1-3 | reservado | Retornam zero; `VBLANK`, `HBLANK` e `FRAME` não são expostos à CPU. |
+| 4 | `CURSOR_END` | Flag retida: o avanço automático completou a área do modo ou o CLEAR terminou. |
+| 5-7 | reservado | Retornam zero. |
 
-| Modo | `VIDEO_X` | `VIDEO_Y` | Organização de `VIDEO_DATA` |
+A GPU executa uma operação de VRAM por vez. Enquanto `BUSY`=1, o software pode consultar `VIDEO_STATUS`, mas deve aguardar `BUSY`=0 antes de alterar `VIDEO_CTRL`, `VIDEO_X`, `VIDEO_Y` ou `VIDEO_DATA` ou escrever nos offsets de solicitação e reconhecimento. `READ_REQ` e `CLEAR_REQ` são ações por escrita, não campos de `VIDEO_CTRL`.
+
+#### 9.3.3 Coordenadas e formato dos dados
+
+| Modo (`VIDEO_CTRL[1:0]`) | `VIDEO_X` | `VIDEO_Y` | Significado de `VIDEO_DATA` |
 |---|---|---|---|
-| Texto 80×30 | 0-79 | 0-29 | Código de caractere; 80 bytes por linha |
-| Gráfico 320×240 | 0-39 | 0-239 | Oito pixels por byte; 40 bytes por linha |
-| Gráfico 160×120 | 0-19 | 0-119 | Oito pixels por byte; 20 bytes por linha |
+| `00`: texto 80×30 | `0-79` | `0-29` | Código de caractere; 80 bytes úteis por linha |
+| `01`: gráfico 320×240 | `0-39` | `0-239` | 8 pixels por byte; 40 bytes úteis por linha |
+| `10`: gráfico 160×120 | `0-19` | `0-119` | 8 pixels por byte; 20 bytes úteis por linha |
 
-Nos modos gráficos, o bit 0 representa o pixel mais à esquerda do grupo e
-o bit 7 representa o pixel mais à direita.
+No texto, a fonte de 8×8 é repetida 2× apenas na vertical. Os modos gráficos são ampliados 2× e 4×, respectivamente. Nos bytes gráficos, o bit 0 é o pixel mais à esquerda e o bit 7 é o mais à direita.
+
+`AUTO_INCREMENT` só afeta escritas em `VIDEO_DATA`: avança X, passa para a próxima linha e, ao completar a última linha, retorna X/Y a (0,0) e marca `CURSOR_END`. A flag não bloqueia novas escritas e permanece marcada até `CURSOR_END_RESET`, início de CLEAR ou reset geral. Escrever X/Y ou mudar o modo não limpa essa flag; a mudança de modo também não reinicializa X/Y.
+
+#### 9.3.4 Leitura e CLEAR
+
+Para ler a VRAM, aguarde `BUSY`=0, posicione X/Y, escreva qualquer byte em `READ_REQ`, aguarde `BUSY`=0 novamente e leia `VIDEO_DATA`. A leitura não incrementa X/Y; ler `VIDEO_DATA` sozinho não inicia uma nova leitura da VRAM.
+
+`CLEAR_REQ` reinicia X/Y em (0,0), limpa `CURSOR_END` no início e preenche com 0x00 a área válida do modo na página acessada pela CPU, independentemente de `AUTO_INCREMENT`. Ao terminar, X/Y voltam a (0,0) e `CURSOR_END` fica marcado. No texto, o caractere 0x00 deve ser vazio em cada banco da ROM para representar a limpeza.
 
 ### 9.4 `SYSTEM_STATUS` — `0xF300`
 
@@ -523,13 +540,13 @@ Duas EPROMs 27C512 convertem os bytes dos latches em segmentos.
 | Pinos da 27C512 | Origem/função |
 |---|---|
 | `A0-A7` | Byte de `DISPLAY_LOW` ou `DISPLAY_HIGH` |
-| `A8` | `DISP_CLOCK`: 0 nibble baixo/direito; 1 nibble alto/esquerdo |
+| `A8` | `DISP_CLOCK`: 0 nibble alto/esquerdo; 1 nibble baixo/direito |
 | `A9` | `/DISP_HEX`: 0 HEX; 1 CHAR |
 | `A10-A15` | GND |
-| `D0-D6` | Segmentos A-G |
-| `D7` | Ponto decimal, não utilizado |
+| `D0-D6` | Segmentos A-G, ativos em nível baixo: 0 acende; 1 apaga |
+| `D7` | Ponto decimal, não utilizado e mantido em 1 |
 
-`display_low.bin` e `display_high.bin` possuem 65.536 bytes e conteúdo idêntico. O circuito usa displays de cátodo comum, multiplexação por 555, dois `BC337`, resistores de base de 1 kΩ e resistores de 330 Ω por segmento.
+`display_low.bin` e `display_high.bin` possuem 65.536 bytes e conteúdo idêntico. O circuito usa displays de ânodo comum, multiplexação por 555, dois `BC327` PNP, resistores de base de 1 kΩ e resistores de 330 Ω por segmento. Como os transistores PNP são acionados em nível baixo, a seleção por `DISP_CLOCK` é a inversa da versão anterior: 0 habilita os dígitos esquerdos e 1 habilita os direitos.
 
 | Código CHAR | Símbolo | Código CHAR | Símbolo |
 |:---:|:---:|:---:|:---:|

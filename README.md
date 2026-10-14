@@ -3,7 +3,7 @@
 <h1>WALL-8 — 8-Bit Computer</h1>
 
 <p>
-O <strong>WALL-8</strong> é um computador didático e modular que fiz para me aprofundar em Eletrônica Digital e entender melhor como o hardware e uma linguagem de programação se comunicam.
+O <strong>WALL-8</strong> é um computador didático e modular que fiz para me aprofundar o meu conhecimento em Eletrônica Digital e entender melhor como o hardware e uma linguagem de programação se comunicam.
 </p>
 
 <p>
@@ -266,11 +266,14 @@ O bloco `0xF000-0xFFFF` é dividido por um `74HC138`. Como `A11` não participa 
 | `0xF000` | `KEY_DATA` | R | Byte recebido do teclado |
 | `0xF100` | `DISPLAY_LOW` | W | Byte dos dois dígitos inferiores |
 | `0xF101` | `DISPLAY_HIGH` | W | Byte dos dois dígitos superiores |
-| `0xF200` | `VIDEO_DATA` | R/W | Transferência de dados com a GPU |
-| `0xF201` | `VIDEO_CMD` | W | Comandos e seleção de modo da GPU |
-| `0xF202` | `VIDEO_X` | R/W | Posição horizontal da GPU |
-| `0xF203` | `VIDEO_Y` | R/W | Posição vertical da GPU |
-| `0xF204` | `VIDEO_STATUS` | R | Estado da GPU |
+| `0xF200` | `VIDEO_DATA` | R/W | Escrita de byte; resultado da última leitura solicitada |
+| `0xF201` | `VIDEO_CTRL` | W | Modo, páginas, cursor, incremento e banco de caracteres |
+| `0xF202` | `VIDEO_X` | W | Coluna de caractere ou de byte da próxima operação |
+| `0xF203` | `VIDEO_Y` | W | Linha da próxima operação |
+| `0xF204` | `VIDEO_STATUS` | R | BUSY e CURSOR_END |
+| `0xF205` | `READ_REQ` | W | Solicita leitura da VRAM em X/Y; dado ignorado |
+| `0xF206` | `CLEAR_REQ` | W | Solicita limpeza da página acessada pela CPU; dado ignorado |
+| `0xF207` | `CURSOR_END_RESET` | W | Limpa CURSOR_END sem alterar X/Y; dado ignorado |
 | `0xF300` | `SYSTEM_STATUS` | R/W | Leitura de status; escrita limpa os timers |
 | `0xF400` | `SOUND_CFG` | W | Configuração de tom e ruído |
 | `0xF500` | `CPU_CFG` | W | Overlay da ROM e seleção do clock |
@@ -393,11 +396,13 @@ As duas EPROMs 27C512 do display usam o seguinte endereçamento:
 | Pinos | Uso |
 |---|---|
 | `A0-A7` | Byte escrito pela CPU |
-| `A8` | `0`: nibble baixo/dígito direito; `1`: nibble alto/dígito esquerdo |
+| `A8` | `DISP_CLOCK`: `0`: nibble alto/dígito esquerdo; `1`: nibble baixo/dígito direito |
 | `A9` | `0`: modo HEX; `1`: modo CHAR |
 | `A10-A15` | Ligados ao GND |
-| `D0-D6` | Segmentos A-G |
-| `D7` | Ponto decimal, não utilizado |
+| `D0-D6` | Segmentos A-G, ativos em nível baixo (`0` acende; `1` apaga) |
+| `D7` | Ponto decimal, não utilizado e mantido em `1` |
+
+Os displays são de ânodo comum. O multiplexador usa dois `BC327` PNP, também ativos em nível baixo: `DISP_CLOCK=0` habilita os dígitos esquerdos e `DISP_CLOCK=1` habilita os direitos.
 
 O script [`Software/source_file_dispDec/7Seg.py`](Software/source_file_dispDec/7Seg.py) gera `display_low.bin` e `display_high.bin`. Cada arquivo possui 65.536 bytes e os dois têm conteúdo idêntico; o que muda no circuito é o byte ligado a `A0-A7` de cada EPROM.
 
@@ -441,48 +446,62 @@ A GPU é uma placa separada com VRAM própria. O README documenta apenas o contr
 
 | Endereço | Nome | Acesso | Função |
 |---|---|:---:|---|
-| `0xF200` | `VIDEO_DATA` | R/W | Grava um byte na posição atual ou devolve a última leitura concluída |
-| `0xF201` | `VIDEO_CMD` | W | Executa um comando completo |
-| `0xF202` | `VIDEO_X` | R/W | Coluna/célula horizontal |
-| `0xF203` | `VIDEO_Y` | R/W | Linha vertical |
-| `0xF204` | `VIDEO_STATUS` | R | Estado da interface e da varredura |
+| `0xF200` | `VIDEO_DATA` | R/W | Escrita solicita gravar um byte em X/Y; leitura devolve a última leitura de VRAM concluída. |
+| `0xF201` | `VIDEO_CTRL` | W | Configuração persistente de modo, páginas, cursor, incremento e banco de caracteres; sem leitura de retorno. |
+| `0xF202` | `VIDEO_X` | W | Coluna de caractere no texto ou coluna de byte nos gráficos; sem leitura de retorno. |
+| `0xF203` | `VIDEO_Y` | W | Linha da próxima operação; sem leitura de retorno. |
+| `0xF204` | `VIDEO_STATUS` | R | `BUSY` no bit 0 e `CURSOR_END` no bit 4; os demais bits retornam zero. |
+| `0xF205` | `READ_REQ` | W | Qualquer escrita solicita ler a VRAM em X/Y; o byte escrito é ignorado. |
+| `0xF206` | `CLEAR_REQ` | W | Qualquer escrita solicita CLEAR na página acessada pela CPU; o byte escrito é ignorado. |
+| `0xF207` | `CURSOR_END_RESET` | W | Qualquer escrita limpa `CURSOR_END`, sem alterar X/Y; o byte escrito é ignorado. |
 
-Esses registradores também aparecem em `0xFA00-0xFA04`.
+Os oito offsets aparecem em `0xF200-0xF207` e no espelho `0xFA00-0xFA07`. A GPU decodifica somente `A2-A0`: os mesmos offsets se repetem a cada oito bytes dentro de cada página de vídeo. A VRAM é acessada indiretamente por X/Y/DATA; não ocupa uma janela direta no espaço de memória da CPU.
 
-### `VIDEO_STATUS`
+### `VIDEO_CTRL` — `0xF201`
 
 | Bit | Nome | Significado |
 |---:|---|---|
-| 0 | `BUSY` | A GPU ainda está executando ou finalizando uma operação |
-| 1 | `VBLANK` | Intervalo vertical de apagamento |
-| 2 | `HBLANK` | Intervalo horizontal de apagamento |
-| 3 | `FRAME` | Alterna a cada quadro completo |
-| 4 | `CURSOR_END` | A escrita alcançou a última posição válida do modo |
-| 5-7 | reservado | Retornam zero |
+| 0 | `MODE_B0` | Bit 0 da seleção de modo. |
+| 1 | `MODE_B1` | Bit 1 da seleção de modo. |
+| 2 | `DOUBLE_BUFFER_EN` | 0: CPU e vídeo usam a página 0. 1: vídeo usa a página frontal e CPU acessa a página oposta. |
+| 3 | `DISPLAY_PAGE` | Página solicitada para exibição, 0 ou 1; a seleção é aplicada no início do `VBLANK`. |
+| 4 | `CURSOR_VISIBLE` | 1 habilita o cursor piscante no texto; 0 oculta o cursor. |
+| 5 | `AUTO_INCREMENT` | 1 avança X/Y após cada escrita em `VIDEO_DATA`; 0 mantém a posição. |
+| 6 | `Char_Bank_14` | Bit 0 do banco de caracteres da ROM, usado no modo texto. |
+| 7 | `Char_Bank_15` | Bit 1 do banco de caracteres da ROM, usado no modo texto. |
 
-Enquanto `BUSY=1`, o software pode ler `VIDEO_STATUS`, mas não deve alterar `VIDEO_X`, `VIDEO_Y` ou `VIDEO_DATA`, nem iniciar outro comando que utilize a VRAM.
+`VIDEO_CTRL` substitui todos os oito bits a cada escrita e não possui valor de reset garantido. Inicialize-o explicitamente e mantenha uma cópia em RAM para alterar campos preservando os demais. `MODE_B1:MODE_B0` = 00 seleciona texto 80 x 30; 01, gráfico 320 x 240; 10, gráfico 160 x 120; 11 não é um modo implementado. Os bits 7:6 selecionam um dos quatro bancos de caracteres da ROM.
 
-### Comandos iniciais
+Com `DOUBLE_BUFFER_EN`=1, a VRAM é dividida em duas páginas de 16 KiB: a CPU lê, escreve e limpa a página oposta à exibida. `DISPLAY_PAGE` é uma solicitação aplicada no `VBLANK`; `VIDEO_STATUS` não confirma a página ativa, e `BUSY` não sinaliza nem confirma essa troca. Com `DOUBLE_BUFFER_EN`=0, ambos acessam a página 0.
 
-| Valor | Nome | Função |
+### `VIDEO_STATUS` — `0xF204`
+
+| Bit | Nome | Significado |
 |---:|---|---|
-| `0x00` | `VIDEO_CLEAR` | Limpa a área usada pelo modo atual |
-| `0x04` | `CURSOR_HIDE` | Esconde o cursor do modo texto |
-| `0x05` | `CURSOR_SHOW` | Mostra o cursor do modo texto |
-| `0x11` | `MODE_TEXT_80X30` | Texto 80×30, fonte 8×8 e escala 2× apenas na vertical|
-| `0x12` | `MODE_GFX_320X240` | Gráfico 320×240 monocromático, escala 2× |
-| `0x13` | `MODE_GFX_160X120` | Gráfico 160×120 monocromático, escala 4× |
-| `0x20` | `VRAM_READ` | Lê a posição indicada por `VIDEO_X` e `VIDEO_Y` |
+| 0 | `BUSY` | 1 indica leitura, escrita ou CLEAR pendente/em execução; aguarde zero antes da próxima operação. |
+| 1-3 | reservado | Retornam zero; `VBLANK`, `HBLANK` e `FRAME` não são expostos à CPU. |
+| 4 | `CURSOR_END` | Flag retida: o avanço automático completou a área do modo ou o CLEAR terminou. |
+| 5-7 | reservado | Retornam zero. |
+
+A GPU executa uma operação de VRAM por vez. Enquanto `BUSY`=1, o software pode consultar `VIDEO_STATUS`, mas deve aguardar `BUSY`=0 antes de alterar `VIDEO_CTRL`, `VIDEO_X`, `VIDEO_Y` ou `VIDEO_DATA` ou escrever nos offsets de solicitação e reconhecimento. `READ_REQ` e `CLEAR_REQ` são ações por escrita, não campos de `VIDEO_CTRL`.
 
 ### Coordenadas e formato dos dados
 
-| Modo | `VIDEO_X` | `VIDEO_Y` | Significado de `VIDEO_DATA` |
+| Modo (`VIDEO_CTRL[1:0]`) | `VIDEO_X` | `VIDEO_Y` | Significado de `VIDEO_DATA` |
 |---|---|---|---|
-| Texto 80×30 | `0-79` | `0-29` | Código de caractere; 80 bytes por linha |
-| Gráfico 320×240 | `0-39` | `0-239` | 8 pixels por byte; 40 bytes por linha |
-| Gráfico 160×120 | `0-19` | `0-119` | 8 pixels por byte; 20 bytes por linha |
+| `00`: texto 80×30 | `0-79` | `0-29` | Código de caractere; 80 bytes úteis por linha |
+| `01`: gráfico 320×240 | `0-39` | `0-239` | 8 pixels por byte; 40 bytes úteis por linha |
+| `10`: gráfico 160×120 | `0-19` | `0-119` | 8 pixels por byte; 20 bytes úteis por linha |
 
-Nos modos gráficos, o bit 0 é o pixel mais à esquerda do grupo e o bit 7 é o mais à direita.
+No texto, a fonte de 8×8 é repetida 2× apenas na vertical. Os modos gráficos são ampliados 2× e 4×, respectivamente. Nos bytes gráficos, o bit 0 é o pixel mais à esquerda e o bit 7 é o mais à direita.
+
+`AUTO_INCREMENT` só afeta escritas em `VIDEO_DATA`: avança X, passa para a próxima linha e, ao completar a última linha, retorna X/Y a (0,0) e marca `CURSOR_END`. A flag não bloqueia novas escritas e permanece marcada até `CURSOR_END_RESET`, início de CLEAR ou reset geral. Escrever X/Y ou mudar o modo não limpa essa flag; a mudança de modo também não reinicializa X/Y.
+
+### Leitura e CLEAR
+
+Para ler a VRAM, aguarde `BUSY`=0, posicione X/Y, escreva qualquer byte em `READ_REQ`, aguarde `BUSY`=0 novamente e leia `VIDEO_DATA`. A leitura não incrementa X/Y; ler `VIDEO_DATA` sozinho não inicia uma nova leitura da VRAM.
+
+`CLEAR_REQ` reinicia X/Y em (0,0), limpa `CURSOR_END` no início e preenche com 0x00 a área válida do modo na página acessada pela CPU, independentemente de `AUTO_INCREMENT`. Ao terminar, X/Y voltam a (0,0) e `CURSOR_END` fica marcado. No texto, o caractere 0x00 deve ser vazio em cada banco da ROM para representar a limpeza.
 
 ### Polling de `BUSY`
 
@@ -627,6 +646,8 @@ O [`Software/Checkup`](Software/Checkup/) é o programa de diagnóstico geral do
 | [`Software/wall8.cpu`](Software/wall8.cpu) | Regras da ISA do WALL-8 para o customasm |
 | [`Software/Gerador_Microcodigo.py`](Software/Gerador_Microcodigo.py) | Geração das ROMs de microcódigo |
 | [`Software/source_file_dispDec/7Seg.py`](Software/source_file_dispDec/7Seg.py) | Geração das ROMs dos displays |
+| [`Software/wall8_emulador.py`](Software/wall8_emulador.py) | Simulador do Wall-8 |
+| [`Software/Gerador_ROM_Caracteres.py`](Software/Gerador_ROM_Caracteres.py) | Gerador do banco de caracteres da GPU |
 
 ## Documentação
 

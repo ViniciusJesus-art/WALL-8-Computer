@@ -215,7 +215,6 @@ CYCLES = {
     LDSP_ABS: 7,
 }
 
-
 OP_NAMES = {
     NOP: "NOP", HLT: "HLT",
     LDA_IMM: "LDA #", LDB_IMM: "LDB #",
@@ -598,8 +597,8 @@ class VideoDevice:
 
     def __init__(self) -> None:
         self.vram = bytearray(self.VRAM_SIZE)
-        # Imagem fisica completa da 27C512. Somente os enderecos com
-        # A11..A13=000 sao selecionados pelo circuito atual.
+        # Imagem fisica completa da 27C512. A11 recebe BIT_CURSOR;
+        # A12 e A13 permanecem em zero.
         self.character_rom = bytearray(CHAR_ROM_SIZE)
         self.character_rom_path: Optional[Path] = None
         self.character_rom_load_mode = "vazia"
@@ -620,7 +619,9 @@ class VideoDevice:
         self.reset()
 
     @staticmethod
-    def character_rom_address(bank: int, character: int, row: int) -> int:
+    def character_rom_address(
+        bank: int, character: int, row: int, *, cursor: bool = False
+    ) -> int:
         """Monta A0..A15 da 27C512 exatamente como no esquema da GPU."""
         if not 0 <= bank <= 3:
             raise ValueError("Banco da fonte deve estar entre 0 e 3")
@@ -628,7 +629,7 @@ class VideoDevice:
             raise ValueError("Codigo de caractere deve estar entre 0x00 e 0xFF")
         if not 0 <= row <= 7:
             raise ValueError("Linha do caractere deve estar entre 0 e 7")
-        return (bank << 14) | (row << 8) | character
+        return (bank << 14) | (int(cursor) << 11) | (row << 8) | character
 
     def load_character_rom_bytes(self, raw: bytes) -> None:
         """Carrega uma imagem fisica completa da EPROM de caracteres."""
@@ -653,11 +654,24 @@ class VideoDevice:
             self.character_bank = bank
             self.dirty = True
 
-    def character_row(self, character: int, row: int) -> int:
+    def character_row(
+        self, character: int, row: int, *, cursor: bool = False
+    ) -> int:
         address = self.character_rom_address(
-            self.character_bank, character & 0xFF, row
+            self.character_bank, character & 0xFF, row, cursor=cursor
         )
         return self.character_rom[address]
+
+    def text_cell_row(
+        self, character: int, row: int, column: int, text_row: int
+    ) -> int:
+        """Le a ROM com A11 refletindo BIT_CURSOR para a celula exibida."""
+        cursor = (
+            self.cursor_visible
+            and column == self.x
+            and text_row == self.y
+        )
+        return self.character_row(character, row, cursor=cursor)
 
     @property
     def width(self) -> int:
@@ -2876,9 +2890,10 @@ class Wall8App:
             return
 
         # Modo texto: simula a leitura real da 27C512. Cada codigo da VRAM
-        # seleciona A0..A7, a linha do glifo seleciona A8..A10 e o banco
-        # seleciona A14..A15. D0 sai primeiro, no pixel esquerdo. Nao existe
-        # fonte do sistema, centralizacao, padding ou margem acrescentada aqui.
+        # seleciona A0..A7, a linha do glifo seleciona A8..A10, BIT_CURSOR
+        # seleciona A11 e o banco seleciona A14..A15. D0 sai primeiro, no
+        # pixel esquerdo. Nao existe fonte do sistema, centralizacao, padding
+        # ou margem acrescentada aqui.
         on = self.TERMINAL_COLORS[self.terminal_color_name]
         off = "#071007"
         on_rgb = bytes(int(on[index:index + 2], 16) for index in (1, 3, 5))
@@ -2892,17 +2907,14 @@ class Wall8App:
             for value in range(256)
         )
         bitmap = bytearray()
-        cursor_x = self.bus.video.x
-        cursor_y = self.bus.video.y
-        cursor_visible = self.bus.video.cursor_visible
         for text_row in range(30):
             row_base = text_row * 80
             character_codes = self.bus.video.vram[row_base:row_base + 80]
             for glyph_row in range(8):
                 for column, character in enumerate(character_codes):
-                    value = self.bus.video.character_row(character, glyph_row)
-                    if cursor_visible and column == cursor_x and text_row == cursor_y:
-                        value ^= 0xFF
+                    value = self.bus.video.text_cell_row(
+                        character, glyph_row, column, text_row
+                    )
                     bitmap.extend(pixel_lut[value])
         ppm = b"P6\n640 240\n255\n" + bytes(bitmap)
         image = self.tk.PhotoImage(data=ppm, format="PPM")
@@ -2916,46 +2928,47 @@ class Wall8App:
 
         self.bus.video.dirty = False
 
-    # Tabelas idênticas às usadas pelo gerador 7Seg.py.
+    # Tabelas ativas em LOW, idênticas às usadas pelo gerador 7Seg.py.
     #
     # Bits de saída da 27C512:
     # D0=A, D1=B, D2=C, D3=D, D4=E, D5=F, D6=G, D7=DP.
+    # Nos displays de ânodo comum, 0 acende e 1 apaga o segmento.
     _DISPLAY_SEG_HEX = {
-        0x0: 0x3F,  # 0
-        0x1: 0x06,  # 1
-        0x2: 0x5B,  # 2
-        0x3: 0x4F,  # 3
-        0x4: 0x66,  # 4
-        0x5: 0x6D,  # 5
-        0x6: 0x7D,  # 6
-        0x7: 0x07,  # 7
-        0x8: 0x7F,  # 8
-        0x9: 0x6F,  # 9
-        0xA: 0x77,  # A
-        0xB: 0x7C,  # b
-        0xC: 0x39,  # C
-        0xD: 0x5E,  # d
-        0xE: 0x79,  # E
-        0xF: 0x71,  # F
+        0x0: 0xC0,  # 0
+        0x1: 0xF9,  # 1
+        0x2: 0xA4,  # 2
+        0x3: 0xB0,  # 3
+        0x4: 0x99,  # 4
+        0x5: 0x92,  # 5
+        0x6: 0x82,  # 6
+        0x7: 0xF8,  # 7
+        0x8: 0x80,  # 8
+        0x9: 0x90,  # 9
+        0xA: 0x88,  # A
+        0xB: 0x83,  # b
+        0xC: 0xC6,  # C
+        0xD: 0xA1,  # d
+        0xE: 0x86,  # E
+        0xF: 0x8E,  # F
     }
 
     _DISPLAY_SEG_CHAR = {
-        0x0: 0x00,  # espaço
-        0x1: 0x77,  # A
-        0x2: 0x7C,  # b
-        0x3: 0x39,  # C
-        0x4: 0x5E,  # d
-        0x5: 0x79,  # E
-        0x6: 0x71,  # F
-        0x7: 0x76,  # H
-        0x8: 0x38,  # L
-        0x9: 0x3F,  # O
-        0xA: 0x73,  # P
-        0xB: 0x50,  # r
-        0xC: 0x78,  # t
-        0xD: 0x3E,  # U
-        0xE: 0x40,  # -
-        0xF: 0x08,  # _
+        0x0: 0xFF,  # espaço
+        0x1: 0x88,  # A
+        0x2: 0x83,  # b
+        0x3: 0xC6,  # C
+        0x4: 0xA1,  # d
+        0x5: 0x86,  # E
+        0x6: 0x8E,  # F
+        0x7: 0x89,  # H
+        0x8: 0xC7,  # L
+        0x9: 0xC0,  # O
+        0xA: 0x8C,  # P
+        0xB: 0xAF,  # r
+        0xC: 0x87,  # t
+        0xD: 0xC1,  # U
+        0xE: 0xBF,  # -
+        0xF: 0xF7,  # _
     }
 
     _DISPLAY_CHAR_NAMES = {
@@ -2994,7 +3007,8 @@ class Wall8App:
           DISPLAY_HIGH -> dois dígitos da esquerda
           DISPLAY_LOW  -> dois dígitos da direita
 
-        A8 escolhe nibble baixo/alto e A9 escolhe HEX/CHAR.
+        A8=0 escolhe o nibble alto/esquerdo, A8=1 escolhe o nibble
+        baixo/direito e A9 escolhe HEX/CHAR.
         """
         nibbles = self._display_nibbles()
 
@@ -3049,7 +3063,7 @@ class Wall8App:
             x0 = start_x + index * spacing
 
             for bit, ((x1, y1), (x2, y2)) in segments.items():
-                enabled = bool(segment_mask & (1 << bit))
+                enabled = not bool(segment_mask & (1 << bit))
                 canvas.create_line(
                     x0 + x1,
                     y1,
@@ -3061,7 +3075,7 @@ class Wall8App:
                 )
 
             # D7: ponto decimal, caso seja usado no futuro.
-            dp_enabled = bool(segment_mask & 0x80)
+            dp_enabled = not bool(segment_mask & 0x80)
             canvas.create_oval(
                 x0 + 45,
                 82,
@@ -3213,28 +3227,71 @@ def run_self_tests() -> None:
     bus = Wall8Bus(audio_enabled=False)
     cpu = Wall8CPU(bus)
 
-    # ROM de caracteres: A0..A7=codigo, A8..A10=linha,
-    # A11..A13=0 e A14..A15=banco.
+    # ROM de caracteres: A0..A7=codigo, A8..A10=linha, A11=BIT_CURSOR,
+    # A12..A13=0 e A14..A15=banco.
     assert VideoDevice.character_rom_address(0, 0x45, 0) == 0x0045
     assert VideoDevice.character_rom_address(0, 0x45, 7) == 0x0745
     assert VideoDevice.character_rom_address(1, 0x45, 0) == 0x4045
     assert VideoDevice.character_rom_address(2, 0x45, 0) == 0x8045
     assert VideoDevice.character_rom_address(3, 0xFF, 7) == 0xC7FF
+    assert VideoDevice.character_rom_address(
+        0, 0x45, 0, cursor=True
+    ) == 0x0845
+    assert VideoDevice.character_rom_address(
+        3, 0xFF, 7, cursor=True
+    ) == 0xCFFF
     test_character_rom = bytearray(CHAR_ROM_SIZE)
     test_character_rom[0x0045] = 0x7E
     test_character_rom[0x0145] = 0x06
     test_character_rom[0x4045] = 0x18
+    cursor_rows = (0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81)
+    for bank in range(4):
+        for row, value in enumerate(cursor_rows):
+            start = VideoDevice.character_rom_address(
+                bank, 0, row, cursor=True
+            )
+            test_character_rom[start:start + 256] = bytes([value]) * 256
     bus.video.load_character_rom_bytes(test_character_rom)
     assert bus.video.character_row(0x45, 0) == 0x7E
     assert bus.video.character_row(0x45, 1) == 0x06
+    assert bus.video.character_row(0x00, 0, cursor=True) == 0x81
+    assert bus.video.character_row(0xFF, 7, cursor=True) == 0x81
+
+    # No monitor, somente a celula do cursor visivel coloca A11 em nivel alto.
+    bus.video.x, bus.video.y = 12, 7
+    bus.video.cursor_visible = True
+    assert bus.video.text_cell_row(0x45, 0, 12, 7) == 0x81
+    assert bus.video.text_cell_row(0x45, 0, 11, 7) == 0x7E
+    bus.video.cursor_visible = False
+    assert bus.video.text_cell_row(0x45, 0, 12, 7) == 0x7E
+    bus.video.cursor_visible = True
+
     bus.video.set_character_bank(1)
     assert bus.video.character_row(0x45, 0) == 0x18
+    assert bus.video.character_row(0xA5, 1, cursor=True) == 0x42
     bus.video.set_character_bank(0)
+    bus.video.x = bus.video.y = 0
     try:
         bus.video.load_character_rom_bytes(b"\x00" * 2048)
         raise AssertionError("ROM de caracteres curta foi aceita")
     except ValueError:
         pass
+
+    # Displays de ânodo comum: saídas das 27C512 ativas em LOW.
+    display_app = Wall8App.__new__(Wall8App)
+    display_app.bus = bus
+    bus.write8(DISPLAY_HIGH, 0x12)
+    bus.write8(DISPLAY_LOW, 0x3F)
+    segment_bytes, rendered, mode = display_app._display_segment_bytes()
+    assert segment_bytes == [0xF9, 0xA4, 0xB0, 0x8E]
+    assert rendered == "123F" and mode.startswith("HEX")
+    assert all(mask & 0x80 for mask in segment_bytes)  # DP apagado em 1
+
+    bus.write8(PERIPH_CFG, 0x01)
+    segment_bytes, rendered, mode = display_app._display_segment_bytes()
+    assert segment_bytes == [0x88, 0x83, 0xC6, 0xF7]
+    assert rendered == "AbC_" and mode.startswith("CHAR")
+    bus.write8(PERIPH_CFG, 0x00)
 
     # ALU
     assert cpu._add8(0xFF, 0x01) == (0x00, 1, 0)

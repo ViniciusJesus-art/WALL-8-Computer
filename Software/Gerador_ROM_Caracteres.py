@@ -5,12 +5,17 @@ Ligacoes de endereco da EPROM:
 
     A0..A7   = VRAM_LATCH_0..7 (codigo do caractere)
     A8..A10  = V_COUNT_1..3    (linha 0..7 do glifo)
-    A11..A13 = GND
+    A11      = BIT_CURSOR
+    A12..A13 = GND
     A14..A15 = banco da fonte
 
-Logo, o endereco de uma linha e:
+Com A11=0, o endereco de uma linha de caractere e:
 
     endereco = (banco << 14) | (linha << 8) | codigo
+
+Com A11=1, a ROM fornece o glifo do cursor. O mesmo byte de cada linha e
+gravado para todos os codigos e bancos, portanto A0..A7 e A14..A15 nao
+alteram a saida nesse modo.
 
 O bit 0 do byte de dados e o pixel esquerdo e o bit 7 e o pixel direito.
 Cada glifo ocupa 8 x 8 bits. A duplicacao para 8 x 16 pertence a GPU.
@@ -37,11 +42,16 @@ ROM_SIZE = 0x10000
 BANK_COUNT = 4
 CHAR_COUNT = 256
 ROWS_PER_GLYPH = 8
-ACCESSIBLE_BYTES_PER_BANK = CHAR_COUNT * ROWS_PER_GLYPH
+ACCESSIBLE_BYTES_PER_BANK = 2 * CHAR_COUNT * ROWS_PER_GLYPH
+CURSOR_ADDRESS_BIT = 11
+CURSOR_ADDRESS_MASK = 1 << CURSOR_ADDRESS_BIT
+DEFAULT_CURSOR_GLYPH = (0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF)
 DEFAULT_OUTPUT_NAME = "char_rom_27c512.bin"
 
 
-def rom_address(bank: int, character: int, row: int) -> int:
+def rom_address(
+    bank: int, character: int, row: int, *, cursor: bool = False
+) -> int:
     """Monta A0..A15 exatamente como no esquema eletrico da GPU."""
     if not 0 <= bank < BANK_COUNT:
         raise ValueError("Banco deve estar entre 0 e 3")
@@ -49,7 +59,12 @@ def rom_address(bank: int, character: int, row: int) -> int:
         raise ValueError("Codigo deve estar entre 0x00 e 0xFF")
     if not 0 <= row < ROWS_PER_GLYPH:
         raise ValueError("Linha deve estar entre 0 e 7")
-    return (bank << 14) | (row << 8) | character
+    return (
+        (bank << 14)
+        | (CURSOR_ADDRESS_MASK if cursor else 0)
+        | (row << 8)
+        | character
+    )
 
 
 def reverse_byte(value: int) -> int:
@@ -143,18 +158,41 @@ _PROJECT_GLYPHS: dict[int, tuple[int, ...]] = {
 }
 
 
+_SAVED_DEFAULT_ROWS = bytes.fromhex(
+    "0000000000000000 1818181818001800 3636000000000000 14143e143e141400 "
+    "187c063c603e1800 006636180c666200 1c361c6e3b336e00 0606020000000000 "
+    "180c0606060c1800 1830606060301800 00663c7e3c660000 0018187e18180000 "
+    "00000000000c0c06 0000003e00000000 00000000000c0c00 406030180c060200 "
+    "3c66766e66663c00 181c181818187e00 3c6660300c067e00 3c66603860663c00 "
+    "30383c367e303000 7e063e6060663c00 380c063e66663c00 7e66603018181800 "
+    "3c66663c66663c00 3c66667c60301c00 000c0c00000c0c00 000c0c00000c0c06 "
+    "30180c060c183000 00003e00003e0000 0c18306030180c00 1e3230180c000c00 "
+    "3e627a7a7a021e00 183c66667e666600 3e66663e66663e00 3c66060606663c00 "
+    "1e36666666361e00 7e06063e06067e00 7e46161e16060e00 3c66067666663c00 "
+    "6666667e66666600 7e18181818187e00 7830303036361c00 66361e0e1e366600 "
+    "0606060606067e00 446c7c5444444400 666e7e7e76666600 3c66666666663c00 "
+    "3e66663e06060600 3c666666763c7000 3e66663e1e366600 3c66063c60663c00 "
+    "7e5a181818183c00 6666666666663c00 66666666663c1800 464646567e6e4600 "
+    "42663c183c664200 66663c1818181800 7e6230184c667e00 1e06060606061e00 "
+    "02060c1830604000 1e18181818181e00 081c362200000000 000000000000007e "
+    "0c0c180000000000 00003c607c665c00 0606063e66663a00 00003c6606663c00 "
+    "7060607c66665c00 00003c667e063c00 1c36061e06060600 00005c66667c603c "
+    "0606366e66666600 18001c1818183c00 600060606064663c 060666361e366600 "
+    "1c18181818183c00 0000647e7e564600 00003e6666666600 00003c6666663c00 "
+    "00003a66663e0606 00005c66667c6060 00003a6e66060600 0000380c3c603c00 "
+    "080c3e0c0c2c1800 0000666666665c00 00006666663c1800 0000626a7e7e3600 "
+    "000022361c362200 00006666667c603c 00003e180c263e00 180c0c060c0c1800 "
+    "1818180018181800 1830306030301800 6e3a000000000000 0000000000000000"
+)
+
+
 def default_glyphs() -> dict[int, tuple[int, ...]]:
-    """Retorna o mapa inicial do banco 00 na convencao D0 = esquerda."""
+    """Retorna os glifos salvos como padrao na convencao D0 = esquerda."""
     result: dict[int, tuple[int, ...]] = {}
     for code in range(0x20, 0x80):
         offset = (code - 0x20) * ROWS_PER_GLYPH
-        source = _BASIC_LATIN_LSB_ROWS[offset:offset + ROWS_PER_GLYPH]
-        # Margens laterais fazem parte da celula; nao alteram 640 x 480.
-        result[code] = tuple(row & 0x7E for row in source)
-    for code, rows in _PROJECT_GLYPHS.items():
-        # Os glifos historicos dos cartuchos foram escritos com D7 a esquerda.
-        # Invertemos seus bytes para preservar a mesma aparencia visual.
-        result[code] = tuple(reverse_byte(row) & 0x7E for row in rows)
+        source = _SAVED_DEFAULT_ROWS[offset:offset + ROWS_PER_GLYPH]
+        result[code] = tuple(source)
     return result
 
 
@@ -175,11 +213,12 @@ class CharacterRom:
     @classmethod
     def blank(cls) -> "CharacterRom":
         rom = cls()
-        # Somente os enderecos possiveis com A11..A13 em GND sao limpos.
+        # A11=0 seleciona os caracteres normais. A12 e A13 continuam em GND.
         for bank in range(BANK_COUNT):
             for row in range(ROWS_PER_GLYPH):
                 start = rom_address(bank, 0, row)
                 rom.data[start:start + CHAR_COUNT] = bytes(CHAR_COUNT)
+        rom.set_cursor_glyph(DEFAULT_CURSOR_GLYPH)
         return rom
 
     @classmethod
@@ -212,6 +251,26 @@ class CharacterRom:
             if not 0 <= value <= 0xFF:
                 raise ValueError("Cada linha do glifo deve ser um byte")
             self.data[rom_address(bank, character, row)] = value
+
+    def get_cursor_glyph(self) -> tuple[int, ...]:
+        """Le o glifo do cursor pela copia canonica do banco/codigo zero."""
+        return tuple(
+            self.data[rom_address(0, 0, row, cursor=True)]
+            for row in range(ROWS_PER_GLYPH)
+        )
+
+    def set_cursor_glyph(self, rows: Iterable[int]) -> None:
+        """Replica o cursor em todos os codigos e bancos acessiveis com A11=1."""
+        values = tuple(rows)
+        if len(values) != ROWS_PER_GLYPH:
+            raise ValueError("O cursor precisa ter exatamente oito linhas")
+        if any(not 0 <= value <= 0xFF for value in values):
+            raise ValueError("Cada linha do cursor deve ser um byte")
+
+        for bank in range(BANK_COUNT):
+            for row, value in enumerate(values):
+                start = rom_address(bank, 0, row, cursor=True)
+                self.data[start:start + CHAR_COUNT] = bytes([value]) * CHAR_COUNT
 
 
 def printable_name(code: int) -> str:
@@ -257,6 +316,7 @@ class CharacterRomEditor:
 
         self.bank_var = tk.StringVar(value=self._bank_label(0))
         self.code_var = tk.StringVar(value=f"{self.character:02X}")
+        self.cursor_mode_var = tk.BooleanVar(value=False)
         self.bytes_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Fonte padrao carregada no banco 00")
         self.character_info_var = tk.StringVar()
@@ -338,6 +398,12 @@ class CharacterRomEditor:
         ttk.Button(top, text="Ir", command=self._code_entered, width=5).pack(side="left")
         ttk.Button(top, text="◀", command=lambda: self.select_character((self.character - 1) & 0xFF), width=4).pack(side="left", padx=(12, 2))
         ttk.Button(top, text="▶", command=lambda: self.select_character((self.character + 1) & 0xFF), width=4).pack(side="left")
+        ttk.Checkbutton(
+            top,
+            text="Editar cursor (A11 = 1)",
+            variable=self.cursor_mode_var,
+            command=self._cursor_mode_changed,
+        ).pack(side="left", padx=(16, 0))
         ttk.Label(top, textvariable=self.character_info_var).pack(side="left", padx=14)
 
         body = ttk.Panedwindow(self.root, orient="horizontal")
@@ -475,7 +541,7 @@ class CharacterRomEditor:
             palette_row, palette_column = divmod(code, 16)
             x0 = margin + palette_column * cell
             y0 = margin + palette_row * cell
-            selected = code == self.character
+            selected = code == self.character and not self.cursor_mode_var.get()
             self.palette.create_rectangle(
                 x0,
                 y0,
@@ -498,8 +564,19 @@ class CharacterRomEditor:
                             outline="",
                         )
 
+    def _active_glyph(self) -> tuple[int, ...]:
+        if self.cursor_mode_var.get():
+            return self.rom.get_cursor_glyph()
+        return self.rom.get_glyph(self.bank, self.character)
+
+    def _set_active_glyph(self, rows: Iterable[int]) -> None:
+        if self.cursor_mode_var.get():
+            self.rom.set_cursor_glyph(rows)
+        else:
+            self.rom.set_glyph(self.bank, self.character, rows)
+
     def _refresh_editor(self, redraw_palette: bool = False) -> None:
-        rows = self.rom.get_glyph(self.bank, self.character)
+        rows = self._active_glyph()
         for row, value in enumerate(rows):
             for column in range(8):
                 color = self.COLOR_ON if value & (1 << column) else self.COLOR_OFF
@@ -507,15 +584,24 @@ class CharacterRomEditor:
 
         self.code_var.set(f"{self.character:02X}")
         self.bytes_var.set(" ".join(f"{value:02X}" for value in rows))
-        self.character_info_var.set(
-            f"${self.character:02X}  {printable_name(self.character)}"
-        )
         address_lines = []
-        for row, value in enumerate(rows):
-            address = rom_address(self.bank, self.character, row)
-            address_lines.append(
-                f"linha {row}:  ${address:04X} = ${value:02X}  {value:08b}"
+        if self.cursor_mode_var.get():
+            self.character_info_var.set("CURSOR - codigo e banco ignorados")
+            for row, value in enumerate(rows):
+                first = rom_address(0, 0, row, cursor=True)
+                last = rom_address(0, 0xFF, row, cursor=True)
+                address_lines.append(
+                    f"linha {row}: ${first:04X}..${last:04X} + bancos = ${value:02X}"
+                )
+        else:
+            self.character_info_var.set(
+                f"${self.character:02X}  {printable_name(self.character)}"
             )
+            for row, value in enumerate(rows):
+                address = rom_address(self.bank, self.character, row)
+                address_lines.append(
+                    f"linha {row}:  ${address:04X} = ${value:02X}  {value:08b}"
+                )
         self.addresses_var.set("\n".join(address_lines))
         self._redraw_preview(rows)
         if redraw_palette:
@@ -571,7 +657,7 @@ class CharacterRomEditor:
         if position is None:
             return
         row, column = position
-        value = self.rom.get_glyph(self.bank, self.character)[row]
+        value = self._active_glyph()[row]
         self.drag_value = not bool(value & (1 << column))
         self._set_pixel(row, column, self.drag_value)
 
@@ -586,15 +672,27 @@ class CharacterRomEditor:
             self._set_pixel(position[0], position[1], False)
 
     def _set_pixel(self, row: int, column: int, enabled: bool) -> None:
-        rows = list(self.rom.get_glyph(self.bank, self.character))
+        rows = list(self._active_glyph())
         mask = 1 << column
         new_value = (rows[row] | mask) if enabled else (rows[row] & ~mask)
         if new_value == rows[row]:
             return
         rows[row] = new_value
-        self.rom.set_glyph(self.bank, self.character, rows)
+        self._set_active_glyph(rows)
         self._mark_dirty()
         self._refresh_editor(redraw_palette=True)
+
+    def _cursor_mode_changed(self) -> None:
+        self._redraw_palette()
+        self._refresh_editor()
+        if self.cursor_mode_var.get():
+            self.status_var.set(
+                "Editando cursor: A11=1; codigo e banco sao ignorados"
+            )
+        else:
+            self.status_var.set(
+                f"Editando banco {self.bank}, codigo ${self.character:02X}"
+            )
 
     def _bank_changed(self, _event=None) -> None:
         try:
@@ -629,6 +727,7 @@ class CharacterRomEditor:
 
     def select_character(self, code: int) -> None:
         self.character = code & 0xFF
+        self.cursor_mode_var.set(False)
         self._redraw_palette()
         self._refresh_editor()
 
@@ -648,37 +747,40 @@ class CharacterRomEditor:
             )
             self._refresh_editor()
             return
-        self.rom.set_glyph(self.bank, self.character, rows)
+        self._set_active_glyph(rows)
         self._mark_dirty()
         self._refresh_editor(redraw_palette=True)
 
     def copy_glyph(self) -> None:
-        self.clipboard_glyph = self.rom.get_glyph(self.bank, self.character)
-        self.status_var.set(
-            f"Glifo ${self.character:02X} do banco {self.bank} copiado"
-        )
+        self.clipboard_glyph = self._active_glyph()
+        if self.cursor_mode_var.get():
+            self.status_var.set("Glifo do cursor copiado")
+        else:
+            self.status_var.set(
+                f"Glifo ${self.character:02X} do banco {self.bank} copiado"
+            )
 
     def paste_glyph(self) -> None:
         if self.clipboard_glyph is None:
             self.status_var.set("Nenhum glifo foi copiado ainda")
             return
-        self.rom.set_glyph(self.bank, self.character, self.clipboard_glyph)
+        self._set_active_glyph(self.clipboard_glyph)
         self._mark_dirty()
         self._refresh_editor(redraw_palette=True)
 
     def clear_glyph(self) -> None:
-        self.rom.set_glyph(self.bank, self.character, (0,) * 8)
+        self._set_active_glyph((0,) * 8)
         self._mark_dirty()
         self._refresh_editor(redraw_palette=True)
 
     def invert_glyph(self) -> None:
-        rows = tuple(value ^ 0xFF for value in self.rom.get_glyph(self.bank, self.character))
-        self.rom.set_glyph(self.bank, self.character, rows)
+        rows = tuple(value ^ 0xFF for value in self._active_glyph())
+        self._set_active_glyph(rows)
         self._mark_dirty()
         self._refresh_editor(redraw_palette=True)
 
     def shift_glyph(self, direction: str) -> None:
-        rows = list(self.rom.get_glyph(self.bank, self.character))
+        rows = list(self._active_glyph())
         if direction == "left":
             rows = [(value >> 1) for value in rows]
         elif direction == "right":
@@ -689,7 +791,7 @@ class CharacterRomEditor:
             rows = [0] + rows[:-1]
         else:
             raise ValueError(direction)
-        self.rom.set_glyph(self.bank, self.character, rows)
+        self._set_active_glyph(rows)
         self._mark_dirty()
         self._refresh_editor(redraw_palette=True)
 
@@ -725,6 +827,7 @@ class CharacterRomEditor:
         self.dirty = True
         self.bank = 0
         self.bank_var.set(self._bank_label(0))
+        self.cursor_mode_var.set(False)
         self._redraw_palette()
         self._refresh_editor()
         self._update_title()
@@ -736,6 +839,7 @@ class CharacterRomEditor:
         self.rom = CharacterRom.blank()
         self.path = None
         self.dirty = True
+        self.cursor_mode_var.set(False)
         self._redraw_palette()
         self._refresh_editor()
         self._update_title()
@@ -763,6 +867,7 @@ class CharacterRomEditor:
             return
         self.path = path
         self.dirty = False
+        self.cursor_mode_var.set(False)
         self._redraw_palette()
         self._refresh_editor()
         self._update_title()
@@ -811,9 +916,11 @@ class CharacterRomEditor:
             "Mapa de enderecos",
             "A0..A7   = codigo do caractere (VRAM_LATCH)\n"
             "A8..A10  = linha 0..7 (V_COUNT_1..3)\n"
-            "A11..A13 = 000 (GND)\n"
+            "A11      = BIT_CURSOR\n"
+            "A12..A13 = 00 (GND)\n"
             "A14..A15 = banco\n\n"
-            "endereco = (banco << 14) | (linha << 8) | codigo\n\n"
+            "A11=0: (banco << 14) | (linha << 8) | codigo\n"
+            "A11=1: fornece o cursor para qualquer codigo e banco\n\n"
             "D0 e o pixel esquerdo; D7 e o pixel direito.",
         )
 
@@ -827,6 +934,8 @@ class CharacterRomEditor:
             "Use o botao direito para apagar pixels.\n"
             "Os oito bytes tambem podem ser digitados diretamente.\n"
             "Copiar/Colar permite repetir um glifo em outro codigo ou banco.\n\n"
+            "Marque 'Editar cursor (A11 = 1)' para desenhar o cursor.\n"
+            "Ele sera replicado em todos os codigos e bancos.\n\n"
             "A previa 8 x 16 mostra a duplicacao vertical feita pela GPU.\n"
             "O arquivo salvo sempre possui 65.536 bytes.",
         )
@@ -840,6 +949,8 @@ def run_self_test() -> None:
     assert rom_address(1, 0x45, 0) == 0x4045
     assert rom_address(2, 0x45, 0) == 0x8045
     assert rom_address(3, 0xFF, 7) == 0xC7FF
+    assert rom_address(0, 0x45, 0, cursor=True) == 0x0845
+    assert rom_address(3, 0xFF, 7, cursor=True) == 0xCFFF
 
     rom = CharacterRom.with_default_font()
     assert len(rom.data) == ROM_SIZE
@@ -847,7 +958,23 @@ def run_self_test() -> None:
         0x7E, 0x06, 0x06, 0x3E, 0x06, 0x06, 0x7E, 0x00
     )
     assert rom.get_glyph(1, ord("E")) == (0,) * 8
-    assert rom.data[0x0800] == 0xFF  # A11=1: endereco nunca selecionado
+    assert rom.get_cursor_glyph() == DEFAULT_CURSOR_GLYPH
+
+    custom_cursor = (0x00, 0x18, 0x3C, 0x7E, 0xFF, 0x7E, 0x3C, 0x18)
+    rom.set_cursor_glyph(custom_cursor)
+    assert rom.get_cursor_glyph() == custom_cursor
+    for bank in range(BANK_COUNT):
+        for row, expected in enumerate(custom_cursor):
+            for character in range(CHAR_COUNT):
+                address = rom_address(bank, character, row, cursor=True)
+                assert rom.data[address] == expected
+
+    # A11=0 continua selecionando a fonte; A12/A13 permanecem fora do circuito.
+    assert rom.get_glyph(0, ord("E")) == (
+        0x7E, 0x06, 0x06, 0x3E, 0x06, 0x06, 0x7E, 0x00
+    )
+    assert rom.data[0x1000] == 0xFF
+    assert rom.data[0x3800] == 0xFF
 
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / DEFAULT_OUTPUT_NAME
@@ -856,7 +983,9 @@ def run_self_test() -> None:
         assert loaded.data == rom.data
         assert output.stat().st_size == ROM_SIZE
 
-    print("Self-test OK: enderecamento, fonte padrao e arquivo de 65536 bytes")
+    print(
+        "Self-test OK: caracteres, cursor A11 replicado e arquivo de 65536 bytes"
+    )
 
 
 def parse_arguments(argv: Optional[list[str]] = None) -> argparse.Namespace:
