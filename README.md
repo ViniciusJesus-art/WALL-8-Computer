@@ -29,6 +29,10 @@ Todo o sistema foi pensado para utilizar portas lógicas da família <strong>74H
 
 ![Visual Completo da PCB](PCB_3D.png)
 
+#### <strong>Também foi desenvolvida uma **GPU dedicada, construída com lógica discreta**, capaz de gerar vídeo VGA em **640 × 480 @ 60 Hz**. Embora faça parte do Wall-8, a GPU possui arquitetura e desenvolvimento próprios.
+
+Você pode conhecer o projeto e suas especificações [aqui](Hardware/GPU/wall8_GPU_Hardware.md).</strong>
+
 Caso tenha interesse fiz tambem um emulador dele em python 3.14 presente no repositorio [aqui](Software/wall8_emulador.py).
 
 ## Sumário

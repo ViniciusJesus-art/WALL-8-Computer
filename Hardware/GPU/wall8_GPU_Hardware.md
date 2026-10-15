@@ -109,29 +109,6 @@ flowchart TD
 
 O circuito mantém um byte em registros e seleciona seus bits com multiplexadores. Não há um shift register de pixels no esquema atual.
 
-### 3.1. Correspondência com o esquema
-
-| Função | Componentes principais |
-|---|---|
-| Decodificação dos oito offsets | U7, 74HC138 |
-| Configuração persistente | U5, 74HC377 |
-| Dado enviado pela CPU / buffer para a SRAM | U1, 74HC377; U36, 74HC245 |
-| Resultado de leitura / saída para a CPU | U48, 74HCT377; U2, 74HC245 |
-| Operações pendentes | U37:A/B para escrita/leitura; U50:A para CLEAR |
-| Posição X / posição Y | U6/U8 e U40/U39, 74HC193 |
-| Fim de linha e de área | U46, U95:A/B e U98:A |
-| SRAM de vídeo | U3, 62256 |
-| Prefetch e byte de varredura | U33, indicado como ACT273; U60, 74HC377 |
-| Fonte / registro de linha / seleção do bit | U78, 27C512; U88, 74HC377; U79, 74HC151 |
-| Seleção de bit gráfico | U34/U35, 74HC151 |
-| Seleção do modo / registro de saída | U82, 74HC153; U94, indicado como AC273 |
-| Página visível e página da CPU | U31:B e U87 |
-| Comparação de cursor / alinhamento | U89/U90, 74HC688; U93:A/B |
-| Oscilador do cursor | U45, 555 |
-| Pulso registrado de escrita na SRAM | U91:A |
-| Saída RGB e seleção manual de canais | U85, R8–R10 e SW1 |
-
-As famílias indicadas são as anotações do esquema, não uma confirmação dos componentes efetivamente montados. Os caminhos críticos precisam ser conferidos com a lista final de peças.
 
 ## 4. Saída física de vídeo e sincronismo VGA
 
@@ -1576,36 +1553,6 @@ O byte enviado aos três endereços de ação é ignorado. Não existe VIDEO_CMD
 - Pulso de escrita da SRAM registrado e detecção de limites sincronizada.
 - Detecção física da placa no conector.
 
-Esses itens descrevem a implementação do esquema. A validação de funcionamento na montagem final é uma etapa distinta.
-
-## 52. Recursos futuros e validações restantes
-
-### 52.1. Funções ausentes do hardware atual
-
-- Cor por pixel ou atributos de cor por caractere.
-- Paleta controlada pela CPU.
-- Motor de sprites, transparência e camadas.
-- Scroll, linhas, retângulos e clipping por hardware.
-- Fontes carregáveis em RAM.
-- DMA e fila de múltiplas operações.
-- Interrupção de VBLANK.
-- Bits de HBLANK/VBLANK/FRAME ou confirmação de page flip na interface da CPU.
-
-Quatro bancos de fonte selecionáveis e double buffer já pertencem à versão atual; não devem continuar na lista de recursos futuros.
-
-### 52.2. O que ainda exige arquivos ou testes adicionais
-
-| Verificação | Evidência necessária |
-|---|---|
-| Forma e codificação das quatro fontes, glifo zero vazio e variantes de cursor | Arquivo efetivamente gravado na 27C512 |
-| Interpretação de controles, histórico, scroll e retorno do cartucho | Código/binário da BIOS |
-| Margens de leitura, escrita e registros | Lista final de componentes, velocidades e análise/medição de tempos |
-| Escala, ordem dos pixels, alinhamento e porches horizontais inferidos de 17/47 clocks | Simulação temporal completa ou teste da saída com padrões assimétricos e bordas |
-| Troca de páginas durante atualização contínua | Teste de double buffer com pedidos em diferentes fases do quadro |
-| Piscar e sinal analógico RGB | Medições na montagem final |
-| Orientação, alimentação e integridade do barramento | PCB e placa montada |
-
-Essa distinção evita apresentar uma inferência do esquema como um ensaio já realizado.
 
 ## 53. Encerramento
 
