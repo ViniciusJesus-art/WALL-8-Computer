@@ -3,350 +3,352 @@
 <h1>WALL-8 — 8-Bit Computer</h1>
 
 <p>
-O <strong>WALL-8</strong> é um computador didático e modular que fiz para me aprofundar o meu conhecimento em Eletrônica Digital e entender melhor como o hardware e uma linguagem de programação se comunicam.
+The <strong>WALL-8</strong> is an educational, modular computer I built to deepen my knowledge of Digital Electronics and better understand how hardware and a programming language communicate with each other.
 </p>
 
 <p>
-Em vez de concentrar a CPU, a memória e os periféricos em um único circuito integrado, ele deixa visíveis, por meio de LEDs, os blocos que normalmente ficam escondidos: registradores, ALU, contador de programa, pilha, barramentos, decodificação de endereços e ROMs de controle.
+Instead of integrating the CPU, memory, and peripherals into a single chip, it makes the normally hidden blocks visible through LEDs: registers, ALU, program counter, stack, buses, address decoding, and control ROMs.
 </p>
 
 <p>
-Pensei nele assim para deixá-lo funcionando em um quadro na parede de casa :D
+I designed it this way so I could have it running on a frame on the wall at home :D
 </p>
 
 <p>
-A ideia é poder acompanhar o caminho de cada byte e observar como uma instrução em Assembly se transforma em sinais elétricos dentro do hardware.
+The idea is to follow the path of each byte and observe how an Assembly instruction becomes electrical signals inside the hardware.
 </p>
 
 <p>
-Todo o sistema foi pensado para utilizar portas lógicas da família <strong>74HC</strong> e alguns outros CIs simples. A construção é inteiramente em componentes <strong>PTH</strong>, dando uma característica mais retrô, inspirada nos computadores das décadas de 60 e 70.
+The entire system was designed around logic gates from the <strong>74HC</strong> family and a few other simple ICs. It is built entirely with <strong>PTH</strong> components, giving it a retro character inspired by computers from the 1960s and 1970s.
 </p>
+
+**Veja a versão em Português 🇧🇷 [aqui](/README-PT_BR.md)**
 
 </div>
 
 ---
 
 
-![Visual Completo da PCB](PCB_3D.png)
+![Full PCB View](PCB_3D.png)
 
-#### <strong>Também foi desenvolvida uma **GPU dedicada, construída com lógica discreta**, capaz de gerar vídeo VGA em **640 × 480 @ 60 Hz**. Embora faça parte do Wall-8, a GPU possui arquitetura e desenvolvimento próprios.
+#### <strong>A **dedicated GPU built with discrete logic** was also developed, capable of generating VGA video at **640 × 480 @ 60 Hz**. Although it is part of the WALL-8, the GPU has its own architecture and development process.
 
-Você pode conhecer o projeto e suas especificações [aqui](Hardware/GPU/wall8_GPU_Hardware.md).</strong>
+You can learn more about the project and its specifications [here](Hardware/GPU/wall8_GPU_Hardware.md).</strong>
 
-Caso tenha interesse fiz tambem um emulador dele em python 3.14 presente no repositorio [aqui](Software/wall8_emulador.py).
+If you're interested, I also made an emulator for it in Python 3.14, available in the repository [here](Software/wall8_emulador.py).
 
-## Sumário
+## Table of Contents
 
-- [O que é o WALL-8](#o-que-é-o-wall-8)
-- [Principais características](#principais-características)
-- [Visão geral da arquitetura](#visão-geral-da-arquitetura)
-- [Especificações rápidas](#especificações-rápidas)
-- [Como uma instrução é executada](#como-uma-instrução-é-executada)
-- [Mapa de memória](#mapa-de-memória)
-- [Boot e janela da BIOS](#boot-e-janela-da-bios)
-- [Mapa de I/O](#mapa-de-io)
-- [Registradores de configuração e status](#registradores-de-configuração-e-status)
-- [Clock da CPU](#clock-da-cpu)
-- [Periféricos](#periféricos)
-- [Interface de vídeo](#interface-de-vídeo)
-- [Conjunto de instruções](#conjunto-de-instruções)
-- [Programando o WALL-8](#programando-o-wall-8)
-- [Arquivos e ferramentas do projeto](#arquivos-e-ferramentas-do-projeto)
-- [Documentação](#documentação)
-- [Créditos](#créditos)
+- [What is the WALL-8?](#what-is-the-wall-8)
+- [Key Features](#key-features)
+- [Architecture Overview](#architecture-overview)
+- [Quick Specifications](#quick-specifications)
+- [How an Instruction Is Executed](#how-an-instruction-is-executed)
+- [Memory Map](#memory-map)
+- [Boot and BIOS Window](#boot-and-bios-window)
+- [I/O Map](#io-map)
+- [Configuration and Status Registers](#configuration-and-status-registers)
+- [CPU Clock](#cpu-clock)
+- [Peripherals](#peripherals)
+- [Video Interface](#video-interface)
+- [Instruction Set](#instruction-set)
+- [Programming the WALL-8](#programming-the-wall-8)
+- [Project Files and Tools](#project-files-and-tools)
+- [Documentation](#documentation)
+- [Credits](#credits)
 
-## O que é o WALL-8
+## What is the WALL-8?
 
-O WALL-8 é, ao mesmo tempo:
+The WALL-8 is, at the same time:
 
-- uma **CPU de 8 bits**, com dois registradores de uso geral e ALU própria;
-- um **microcomputador de 64 KiB**, com RAM, BIOS, cartucho e I/O no mesmo espaço de endereços;
-- uma plataforma de estudo de **microarquitetura**, pois cada instrução é dividida em microetapas;
-- um sistema modular, preparado para teclado, display, som, cartucho, GPU externa e futuras expansões.
+- an **8-bit CPU**, with two general-purpose registers and its own ALU;
+- a **64 KiB microcomputer**, with RAM, BIOS, cartridge, and I/O sharing the same address space;
+- a platform for studying **microarchitecture**, since each instruction is divided into microsteps;
+- a modular system designed for a keyboard, display, sound, cartridge, external GPU, and future expansions.
 
-O núcleo utiliza CIs lógicos da família **74HC**, memórias paralelas e componentes convencionais. A placa de vídeo é um módulo independente, conectado ao barramento de I/O e equipado com VRAM própria.
+The core uses **74HC** logic ICs, parallel memories, and conventional components. The video board is an independent module connected to the I/O bus and equipped with its own VRAM.
 
-## Principais características
+## Key Features
 
-- barramento de dados de 8 bits;
-- barramentos de endereços interno e externo de 16 bits;
-- espaço de endereçamento de 64 KiB;
-- controle por cinco ROMs de microcódigo, totalizando uma palavra de controle de 40 bits;
-- 76 opcodes atualmente definidos;
-- registradores `A`, `B`, `TMP`, `IR`, `PC`, `MAR`, `ADDR`, `PTR`, `SP` e flags;
-- flags `Z`, `C`, `N` e `V`;
-- RAM de 32 KiB no modo normal;
-- EPROM 27C512 usada como BIOS, com janela de boot de até 40 KiB;
-- região de cartucho de 20 KiB;
-- 4 KiB de I/O mapeado em memória;
-- clock selecionável de 125 kHz a 16 MHz;
-- teclado de 8 bits, quatro displays de sete segmentos, timers, som e sinais de detecção;
-- conector para placa de vídeo externa com modos texto e gráficos monocromáticos;
-- montagem de programas com o [customasm](https://github.com/hlorenzi/customasm).
+- 8-bit data bus;
+- 16-bit internal and external address buses;
+- 64 KiB address space;
+- control through five microcode ROMs, forming a 40-bit control word;
+- 76 currently defined opcodes;
+- `A`, `B`, `TMP`, `IR`, `PC`, `MAR`, `ADDR`, `PTR`, `SP`, and flag registers;
+- `Z`, `C`, `N`, and `V` flags;
+- 32 KiB of RAM in normal mode;
+- 27C512 EPROM used as the BIOS, with a boot window of up to 40 KiB;
+- 20 KiB cartridge region;
+- 4 KiB of memory-mapped I/O;
+- selectable clock from 125 kHz to 16 MHz;
+- 8-bit keyboard, four seven-segment displays, timers, sound, and detection signals;
+- connector for an external video board with text and monochrome graphics modes;
+- program assembly with [customasm](https://github.com/hlorenzi/customasm).
 
-## Visão geral da arquitetura
+## Architecture Overview
 
 ```mermaid
 flowchart TD
-    ROMS[ROMs de microcódigo<br/>40 sinais de controle] --> CTRL[Unidade de controle]
-    CTRL --> REGS[Registradores<br/>A, B, TMP, IR, PC, MAR, ADDR, PTR e SP]
-    REGS <--> DB[Barramento de dados<br/>8 bits]
-    REGS --> IAB[Barramento interno de endereços<br/>16 bits]
+    ROMS[Microcode ROMs<br/>40 control signals] --> CTRL[Control unit]
+    CTRL --> REGS[Registers<br/>A, B, TMP, IR, PC, MAR, ADDR, PTR and SP]
+    REGS <--> DB[Data bus<br/>8 bits]
+    REGS --> IAB[Internal address bus<br/>16 bits]
     IAB --> MAR[MAR]
-    MAR --> EAB[Barramento externo de endereços<br/>16 bits]
-    DB <--> ALU[ALU<br/>Z, C, N e V]
-    DB <--> MEM[RAM, BIOS e cartucho]
-    DB <--> IO[I/O mapeado em memória]
+    MAR --> EAB[External address bus<br/>16 bits]
+    DB <--> ALU[ALU<br/>Z, C, N and V]
+    DB <--> MEM[RAM, BIOS and cartridge]
+    DB <--> IO[Memory-mapped I/O]
     EAB --> MEM
     EAB --> IO
-    IO --> PER[Teclado, display, timers,<br/>som, GPIO e GPU]
+    IO --> PER[Keyboard, display, timers,<br/>sound, GPIO and GPU]
 ```
 
-Existem três caminhos principais:
+There are three main paths:
 
-1. O **Data Bus** de 8 bits transporta opcodes, operandos e dados.
-2. O **Internal Address Bus** de 16 bits move endereços entre `PC`, `ADDR`, `PTR`, `SP` e `MAR`.
-3. O **External Address Bus** de 16 bits sai do `MAR` e seleciona RAM, BIOS, cartucho ou I/O.
+1. The 8-bit **Data Bus** carries opcodes, operands, and data.
+2. The 16-bit **Internal Address Bus** moves addresses among `PC`, `ADDR`, `PTR`, `SP`, and `MAR`.
+3. The 16-bit **External Address Bus** comes from `MAR` and selects RAM, BIOS, cartridge, or I/O.
 
-O `MAR` separa o endereço que está sendo preparado internamente do endereço apresentado aos dispositivos externos. Isso permite que o microcódigo monte um novo endereço sem alterar imediatamente o ciclo de memória em andamento.
+`MAR` separates the address being prepared internally from the address presented to external devices. This allows the microcode to build a new address without immediately changing the ongoing memory cycle.
 
-## Especificações rápidas
+## Quick Specifications
 
-| Item | Especificação |
+| Item | Specification |
 |---|---|
-| Arquitetura | CPU discreta de 8 bits |
-| Família lógica principal | 74HC |
-| Alimentação lógica | 5 V |
+| Architecture | Discrete 8-bit CPU |
+| Main logic family | 74HC |
+| Logic supply | 5 V |
 | Data Bus | 8 bits |
-| Address Bus interno | 16 bits |
-| Address Bus externo | 16 bits |
-| Espaço de endereços | 64 KiB (`0x0000` a `0xFFFF`) |
-| Clock de referência | Cristal de 16 MHz |
-| Clocks selecionáveis | 16 MHz, 8 MHz, 4 MHz, 2 MHz, 1 MHz, 500 kHz, 250 kHz e 125 kHz |
-| Controle | 5 ROMs de microcódigo × 8 bits |
-| Endereço de microcódigo | 8 bits de opcode + 4 flags + 4 bits de microstep |
-| Microsteps | `T0` a `T15` |
-| ISA atual | 76 opcodes |
-| Registradores de dados | `A`, `B` e `TMP`, todos de 8 bits |
-| Registradores de endereço | `PC`, `MAR`, `ADDR`, `PTR` e `SP`, todos de 16 bits |
-| Flags | `Z`, `C`, `N` e `V` |
-| RAM normal | 32 KiB |
-| BIOS residente | 8 KiB após a liberação do overlay |
-| ROM disponível no boot | 40 KiB, sem RAM |
-| Cartucho | 20 KiB |
-| I/O | 4 KiB mapeados em memória |
+| Internal Address Bus | 16 bits |
+| External Address Bus | 16 bits |
+| Address space | 64 KiB (`0x0000` to `0xFFFF`) |
+| Reference clock | 16 MHz crystal |
+| Selectable clocks | 16 MHz, 8 MHz, 4 MHz, 2 MHz, 1 MHz, 500 kHz, 250 kHz, and 125 kHz |
+| Control | 5 microcode ROMs × 8 bits |
+| Microcode address | 8 opcode bits + 4 flags + 4 microstep bits |
+| Microsteps | `T0` to `T15` |
+| Current ISA | 76 opcodes |
+| Data registers | `A`, `B`, and `TMP`, all 8-bit |
+| Address registers | `PC`, `MAR`, `ADDR`, `PTR`, and `SP`, all 16-bit |
+| Flags | `Z`, `C`, `N`, and `V` |
+| Normal RAM | 32 KiB |
+| Resident BIOS | 8 KiB after the overlay is released |
+| ROM available at boot | 40 KiB, without RAM |
+| Cartridge | 20 KiB |
+| I/O | 4 KiB memory-mapped |
 
-## Como uma instrução é executada
+## How an Instruction Is Executed
 
-Cada opcode seleciona uma sequência nas ROMs de microcódigo. O endereço de cada posição das ROMs é formado assim:
+Each opcode selects a sequence in the microcode ROMs. The address of each ROM location is formed as follows:
 
 ```text
-A0-A7   = opcode do IR
-A8-A11  = flags Z, C, N e V
+A0-A7   = opcode from IR
+A8-A11  = Z, C, N and V flags
 A12-A15 = microstep T0-T15
 ```
 
-Em termos numéricos:
+Numerically:
 
 ```text
-endereço_da_microROM = opcode | (flags << 8) | (step << 12)
+microROM_address = opcode | (flags << 8) | (step << 12)
 ```
 
-As cinco ROMs são lidas em paralelo. Juntas, elas produzem os 40 sinais que comandam saídas de registradores, cargas, ALU, memória, pilha, ponteiro e avanço ou reinício da microsequência.
+The five ROMs are read in parallel. Together, they produce the 40 signals that control register outputs, loads, ALU, memory, stack, pointer, and the advance or reset of the microsequence.
 
-### Fetch comum
+### Common Fetch
 
-Todas as instruções começam com a busca do opcode:
+All instructions begin by fetching the opcode:
 
 ```text
-T0: PC -> barramento interno -> MAR
+T0: PC -> internal bus -> MAR
 T1: MEM[MAR] -> IR; PC++
 ```
 
-Depois de `T1`, a sequência depende do opcode e das flags. Ao final, o sinal de reset do contador de passos retorna a execução a `T0` para buscar a próxima instrução.
+After `T1`, the sequence depends on the opcode and flags. At the end, the step-counter reset signal returns execution to `T0` to fetch the next instruction.
 
-### Registradores principais
+### Main Registers
 
-| Registrador | Largura | Função |
+| Register | Width | Function |
 |---|---:|---|
-| `A` | 8 bits | Acumulador e primeiro operando da ALU |
-| `B` | 8 bits | Segundo operando e registrador auxiliar |
-| `TMP` | 8 bits | Preserva valores durante instruções imediatas e `STI` |
-| `IR` | 8 bits | Mantém o opcode atual |
-| `PC` | 16 bits | Endereço da próxima instrução |
-| `MAR` | 16 bits | Dirige o barramento externo de endereços |
-| `ADDR` | 16 bits | Monta endereços absolutos recebidos em dois bytes |
-| `PTR` | 16 bits | Ponteiro programável para acesso indireto |
-| `SP` | 16 bits | Ponteiro da pilha, que cresce em direção aos endereços menores |
+| `A` | 8 bits | Accumulator and first ALU operand |
+| `B` | 8 bits | Second operand and auxiliary register |
+| `TMP` | 8 bits | Preserves values during immediate instructions and `STI` |
+| `IR` | 8 bits | Holds the current opcode |
+| `PC` | 16 bits | Address of the next instruction |
+| `MAR` | 16 bits | Drives the external address bus |
+| `ADDR` | 16 bits | Assembles absolute addresses received in two bytes |
+| `PTR` | 16 bits | Programmable pointer for indirect access |
+| `SP` | 16 bits | Stack pointer, which grows toward lower addresses |
 
 ### Flags
 
-| Flag | Significado |
+| Flag | Meaning |
 |---|---|
-| `Z` | Resultado igual a `0x00` |
-| `C` | Carry da soma, *not borrow* da subtração ou bit deslocado |
-| `N` | Cópia do bit 7 do resultado |
-| `V` | Overflow em aritmética com sinal |
+| `Z` | Result equals `0x00` |
+| `C` | Carry from addition, *not borrow* from subtraction, or shifted-out bit |
+| `N` | Copy of bit 7 of the result |
+| `V` | Signed arithmetic overflow |
 
-As flags participam diretamente do endereço das ROMs de microcódigo. Por isso, um jump condicional pode ter uma microsequência diferente conforme o estado de `Z`, `C`, `N` ou `V`.
+The flags directly contribute to the addresses of the microcode ROMs. Therefore, a conditional jump can have a different microsequence depending on the state of `Z`, `C`, `N`, or `V`.
 
-## Mapa de memória
+## Memory Map
 
-Este é o mapa usado depois que a BIOS libera a RAM da região baixa:
+This is the map used after the BIOS releases the RAM in the lower region:
 
-| Faixa | Tamanho | Dispositivo | Uso |
+| Range | Size | Device | Use |
 |---|---:|---|---|
-| `0x0000-0x7FFF` | 32 KiB | RAM | Programas, variáveis, buffers e pilha |
-| `0x8000-0x9FFF` | 8 KiB | BIOS/ROM | Código residente e rotinas do sistema |
-| `0xA000-0xEFFF` | 20 KiB | Cartucho | Programa ou dados externos |
-| `0xF000-0xFFFF` | 4 KiB | I/O | Periféricos mapeados em memória |
+| `0x0000-0x7FFF` | 32 KiB | RAM | Programs, variables, buffers, and stack |
+| `0x8000-0x9FFF` | 8 KiB | BIOS/ROM | Resident code and system routines |
+| `0xA000-0xEFFF` | 20 KiB | Cartridge | External program or data |
+| `0xF000-0xFFFF` | 4 KiB | I/O | Memory-mapped peripherals |
 
-Como o I/O faz parte do mesmo espaço de endereços, não existem instruções especiais de porta. O software usa `LDA`, `STA` ou `STI`:
+Since I/O shares the same address space, there are no special port instructions. Software uses `LDA`, `STA`, or `STI`:
 
 ```asm
-LDA $F300          ; lê SYSTEM_STATUS
-STI $F400, #$12    ; configura o som
+LDA $F300          ; read SYSTEM_STATUS
+STI $F400, #$12    ; configure sound
 ```
 
-## Boot e janela da BIOS
+## Boot and BIOS Window
 
-O sinal `/BOOT_ROM_EN` é ativo em nível baixo e controla qual dispositivo responde entre `0x0000` e `0x7FFF`.
+The `/BOOT_ROM_EN` signal is active-low and controls which device responds between `0x0000` and `0x7FFF`.
 
-### Overlay ativo: `/BOOT_ROM_EN = 0`
+### Overlay active: `/BOOT_ROM_EN = 0`
 
-No reset, a EPROM responde a uma janela **contínua de 40 KiB**:
+On reset, the EPROM responds to a **continuous 40 KiB window**:
 
-| Faixa da CPU | Dispositivo | Endereço físico na 27C512 |
+| CPU range | Device | Physical address in the 27C512 |
 |---|---|---|
 | `0x0000-0x7FFF` | ROM | `0x0000-0x7FFF` |
 | `0x8000-0x9FFF` | ROM | `0x8000-0x9FFF` |
 
-Os pinos de endereço `A0-A15` da 27C512 estão ligados diretamente aos bits correspondentes do barramento. Portanto, os primeiros 32 KiB **não são uma repetição automática** dos 8 KiB superiores: o arquivo da ROM é lido normalmente do offset `0x0000` até `0x9FFF`.
+The 27C512 address pins `A0-A15` are directly connected to the corresponding bus bits. Therefore, the first 32 KiB **are not an automatic repetition** of the upper 8 KiB: the ROM image is read normally from offset `0x0000` through `0x9FFF`.
 
-Nesse estado:
+In this state:
 
-- o `PC` inicia em `0x0000` e encontra código válido na ROM;
-- a CPU pode usar até 40 KiB de programa em ROM;
-- a RAM não fica acessível;
-- o sistema pode permanecer assim indefinidamente se a aplicação não precisar de RAM.
+- `PC` starts at `0x0000` and finds valid code in ROM;
+- the CPU can use up to 40 KiB of ROM program space;
+- RAM is not accessible;
+- the system can remain in this state indefinitely if the application does not need RAM.
 
-### Overlay liberado: `/BOOT_ROM_EN = 1`
+### Overlay released: `/BOOT_ROM_EN = 1`
 
-Depois que o software grava `1` no bit 0 de `CPU_CFG`:
+After software writes `1` to bit 0 of `CPU_CFG`:
 
-| Faixa | Dispositivo |
+| Range | Device |
 |---|---|
 | `0x0000-0x7FFF` | RAM |
-| `0x8000-0x9FFF` | ROM residente |
+| `0x8000-0x9FFF` | Resident ROM |
 
-Para fazer essa transição com segurança, a instrução que libera o overlay e todo o código que continuará executando devem estar na parte residente entre `0x8000` e `0x9FFF`. Essa parte da BIOS deve caber em 8 KiB.
+To make this transition safely, the instruction that releases the overlay and all code that will continue executing must reside in the region from `0x8000` to `0x9FFF`. This part of the BIOS must fit within 8 KiB.
 
-Exemplo mantendo 16 MHz e liberando a RAM:
+Example that keeps 16 MHz and releases RAM:
 
 ```asm
-STI $F500, #$01    ; /BOOT_ROM_EN=1 e CLK_B[2:0]=000
+STI $F500, #$01    ; /BOOT_ROM_EN=1 and CLK_B[2:0]=000
 ```
 
-## Mapa de I/O
+## I/O Map
 
-O bloco `0xF000-0xFFFF` é dividido por um `74HC138`. Como `A11` não participa do subdecode, cada página principal possui um espelho 2 KiB acima.
+The `0xF000-0xFFFF` block is divided by a `74HC138`. Since `A11` does not participate in the subdecoding, each main page has a mirror 2 KiB above it.
 
-| Página principal | Espelho | Módulo |
+| Main page | Mirror | Module |
 |---|---|---|
-| `0xF000-0xF0FF` | `0xF800-0xF8FF` | Teclado |
+| `0xF000-0xF0FF` | `0xF800-0xF8FF` | Keyboard |
 | `0xF100-0xF1FF` | `0xF900-0xF9FF` | Display |
-| `0xF200-0xF2FF` | `0xFA00-0xFAFF` | Vídeo/GPU |
-| `0xF300-0xF3FF` | `0xFB00-0xFBFF` | Status e timers |
-| `0xF400-0xF4FF` | `0xFC00-0xFCFF` | Som |
-| `0xF500-0xF5FF` | `0xFD00-0xFDFF` | Configuração/GPIO |
+| `0xF200-0xF2FF` | `0xFA00-0xFAFF` | Video/GPU |
+| `0xF300-0xF3FF` | `0xFB00-0xFBFF` | Status and timers |
+| `0xF400-0xF4FF` | `0xFC00-0xFCFF` | Sound |
+| `0xF500-0xF5FF` | `0xFD00-0xFDFF` | Configuration/GPIO |
 | `0xF600-0xF6FF` | `0xFE00-0xFEFF` | CART_IO |
-| `0xF700-0xF7FF` | `0xFF00-0xFFFF` | Livre |
+| `0xF700-0xF7FF` | `0xFF00-0xFFFF` | Free |
 
-### Endereços utilizados
+### Addresses Used
 
-| Endereço | Nome | Acesso | Função |
+| Address | Name | Access | Function |
 |---|---|:---:|---|
-| `0xF000` | `KEY_DATA` | R | Byte recebido do teclado |
-| `0xF100` | `DISPLAY_LOW` | W | Byte dos dois dígitos inferiores |
-| `0xF101` | `DISPLAY_HIGH` | W | Byte dos dois dígitos superiores |
-| `0xF200` | `VIDEO_DATA` | R/W | Escrita de byte; resultado da última leitura solicitada |
-| `0xF201` | `VIDEO_CTRL` | W | Modo, páginas, cursor, incremento e banco de caracteres |
-| `0xF202` | `VIDEO_X` | W | Coluna de caractere ou de byte da próxima operação |
-| `0xF203` | `VIDEO_Y` | W | Linha da próxima operação |
-| `0xF204` | `VIDEO_STATUS` | R | BUSY e CURSOR_END |
-| `0xF205` | `READ_REQ` | W | Solicita leitura da VRAM em X/Y; dado ignorado |
-| `0xF206` | `CLEAR_REQ` | W | Solicita limpeza da página acessada pela CPU; dado ignorado |
-| `0xF207` | `CURSOR_END_RESET` | W | Limpa CURSOR_END sem alterar X/Y; dado ignorado |
-| `0xF300` | `SYSTEM_STATUS` | R/W | Leitura de status; escrita limpa os timers |
-| `0xF400` | `SOUND_CFG` | W | Configuração de tom e ruído |
-| `0xF500` | `CPU_CFG` | W | Overlay da ROM e seleção do clock |
-| `0xF501` | `PERIPH_CFG` | W | Modo do display e LEDs |
+| `0xF000` | `KEY_DATA` | R | Byte received from the keyboard |
+| `0xF100` | `DISPLAY_LOW` | W | Byte for the two lower digits |
+| `0xF101` | `DISPLAY_HIGH` | W | Byte for the two upper digits |
+| `0xF200` | `VIDEO_DATA` | R/W | Byte write; result of the last requested read |
+| `0xF201` | `VIDEO_CTRL` | W | Mode, pages, cursor, increment, and character bank |
+| `0xF202` | `VIDEO_X` | W | Character or byte column of the next operation |
+| `0xF203` | `VIDEO_Y` | W | Row of the next operation |
+| `0xF204` | `VIDEO_STATUS` | R | BUSY and CURSOR_END |
+| `0xF205` | `READ_REQ` | W | Requests a VRAM read at X/Y; data ignored |
+| `0xF206` | `CLEAR_REQ` | W | Requests clearing the page accessed by the CPU; data ignored |
+| `0xF207` | `CURSOR_END_RESET` | W | Clears CURSOR_END without changing X/Y; data ignored |
+| `0xF300` | `SYSTEM_STATUS` | R/W | Status read; writing clears the timers |
+| `0xF400` | `SOUND_CFG` | W | Tone and noise configuration |
+| `0xF500` | `CPU_CFG` | W | ROM overlay and clock selection |
+| `0xF501` | `PERIPH_CFG` | W | Display mode and LEDs |
 
-Os mesmos registradores aparecem nos endereços espelhados correspondentes. Por exemplo, `VIDEO_STATUS` também pode ser lido em `0xFA04`.
+The same registers appear at their corresponding mirrored addresses. For example, `VIDEO_STATUS` can also be read at `0xFA04`.
 
-## Registradores de configuração e status
+## Configuration and Status Registers
 
 ### `SYSTEM_STATUS` — `0xF300`
 
-| Bit | Nome | Estado ativo | Significado |
+| Bit | Name | Active state | Meaning |
 |---:|---|---|---|
-| 0 | `TIMER_1MS` | `1` | Evento do timer nominal de 1 ms |
-| 1 | `TIMER_500MS` | `1` | Evento do timer de 500 ms |
-| 2 | reservado | — | Retorna zero |
-| 3 | reservado | — | Retorna zero |
-| 4 | `/CARD_DETECT` | `0` | Cartucho conectado |
-| 5 | `/VIDEO_DETECT` | `0` | Placa de vídeo conectada |
-| 6 | `/KEYBOARD_DETECT` | `0` | Teclado conectado |
-| 7 | `KEY_READY` | `1` | Existe um byte de teclado pronto |
+| 0 | `TIMER_1MS` | `1` | Nominal 1 ms timer event |
+| 1 | `TIMER_500MS` | `1` | 500 ms timer event |
+| 2 | Reserved | — | Returns zero |
+| 3 | Reserved | — | Returns zero |
+| 4 | `/CARD_DETECT` | `0` | Cartridge connected |
+| 5 | `/VIDEO_DETECT` | `0` | Video board connected |
+| 6 | `/KEYBOARD_DETECT` | `0` | Keyboard connected |
+| 7 | `KEY_READY` | `1` | A keyboard byte is ready |
 
-O timer chamado arquiteturalmente de `TIMER_1MS` opera a **1024 Hz**, portanto seu período real é **0,9765625 ms**. A aproximação é intencional e simplifica o divisor de clock.
+The timer architecturally named `TIMER_1MS` operates at **1024 Hz**, so its actual period is **0.9765625 ms**. This approximation is intentional and simplifies the clock divider.
 
-Qualquer escrita na página de status gera `/TIMER_RESET` e limpa os flip-flops dos timers. Os bits de presença e `KEY_READY` não são alterados por essa escrita.
+Any write to the status page generates `/TIMER_RESET` and clears the timer flip-flops. The presence bits and `KEY_READY` are not changed by this write.
 
 ### `SOUND_CFG` — `0xF400`
 
-| Bit | Nome | Significado |
+| Bit | Name | Meaning |
 |---:|---|---|
-| 0 | `NOISE_EN` | `1` habilita o gerador de ruído; `0` desliga |
-| 1 | `TONE_EN` | `1` habilita o gerador de tom; `0` desliga |
-| 2 | `TONE_B0` | Seleção de tom, bit 0 |
-| 3 | `TONE_B1` | Seleção de tom, bit 1 |
-| 4 | `TONE_B2` | Seleção de tom, bit 2 |
-| 5 | `NOISE_B0` | Configuração de ruído, bit 0 |
-| 6 | `NOISE_B1` | Configuração de ruído, bit 1 |
-| 7 | `NOISE_B2` | Configuração de ruído, bit 2 |
+| 0 | `NOISE_EN` | `1` enables the noise generator; `0` turns it off |
+| 1 | `TONE_EN` | `1` enables the tone generator; `0` turns it off |
+| 2 | `TONE_B0` | Tone selection, bit 0 |
+| 3 | `TONE_B1` | Tone selection, bit 1 |
+| 4 | `TONE_B2` | Tone selection, bit 2 |
+| 5 | `NOISE_B0` | Noise configuration, bit 0 |
+| 6 | `NOISE_B1` | Noise configuration, bit 1 |
+| 7 | `NOISE_B2` | Noise configuration, bit 2 |
 
-`NOISE_EN` e `TONE_EN` são ativos em nível alto e não levam barra em seus nomes. O byte é armazenado por um `74HC377`.
+`NOISE_EN` and `TONE_EN` are active-high and do not have slashes in their names. The byte is stored by a `74HC377`.
 
 ### `CPU_CFG` — `0xF500`
 
-| Bit | Nome | Significado |
+| Bit | Name | Meaning |
 |---:|---|---|
-| 0 | `/BOOT_ROM_EN` | `0` habilita a ROM em `0x0000-0x9FFF`; `1` libera a RAM baixa |
-| 1 | reservado | Não conectado |
-| 2 | reservado | Não conectado |
-| 3 | reservado | Não conectado |
-| 4 | `CLK_B0` | Seleção do clock, bit 0 |
-| 5 | `CLK_B1` | Seleção do clock, bit 1 |
-| 6 | `CLK_B2` | Seleção do clock, bit 2 |
-| 7 | reservado | Não conectado |
+| 0 | `/BOOT_ROM_EN` | `0` enables ROM at `0x0000-0x9FFF`; `1` releases lower RAM |
+| 1 | Reserved | Not connected |
+| 2 | Reserved | Not connected |
+| 3 | Reserved | Not connected |
+| 4 | `CLK_B0` | Clock selection, bit 0 |
+| 5 | `CLK_B1` | Clock selection, bit 1 |
+| 6 | `CLK_B2` | Clock selection, bit 2 |
+| 7 | Reserved | Not connected |
 
-Os campos `CLK_B0`, `CLK_B1` e `CLK_B2` representam um código binário normal; não são sinais ativos em nível baixo.
+The `CLK_B0`, `CLK_B1`, and `CLK_B2` fields represent a normal binary code; they are not active-low signals.
 
 ### `PERIPH_CFG` — `0xF501`
 
-| Bit | Nome | Significado |
+| Bit | Name | Meaning |
 |---:|---|---|
-| 0 | `/DISP_HEX` | `0` seleciona HEX; `1` seleciona CHAR |
-| 1 | reservado | Não conectado |
-| 2 | `/LED_EN` | `0` habilita os LEDs; `1` desabilita |
-| 3-7 | reservado | Não conectado |
+| 0 | `/DISP_HEX` | `0` selects HEX; `1` selects CHAR |
+| 1 | Reserved | Not connected |
+| 2 | `/LED_EN` | `0` enables LEDs; `1` disables them |
+| 3-7 | Reserved | Not connected |
 
-## Clock da CPU
+## CPU Clock
 
-O cristal principal é de 16 MHz. O código `000` não passa por divisão: ele seleciona o **bypass direto** do clock principal.
+The main crystal runs at 16 MHz. Code `000` does not use any division: it selects **direct bypass** of the main clock.
 
-| `CLK_B2` | `CLK_B1` | `CLK_B0` | Código | Clock da CPU |
+| `CLK_B2` | `CLK_B1` | `CLK_B0` | Code | CPU Clock |
 |:---:|:---:|:---:|:---:|---:|
 | 0 | 0 | 0 | `000` | 16 MHz — bypass |
 | 0 | 0 | 1 | `001` | 8 MHz |
@@ -357,23 +359,23 @@ O cristal principal é de 16 MHz. O código `000` não passa por divisão: ele s
 | 1 | 1 | 0 | `110` | 250 kHz |
 | 1 | 1 | 1 | `111` | 125 kHz |
 
-Como os bits de clock ocupam `CPU_CFG[6:4]`, alguns valores úteis são:
+Since the clock bits occupy `CPU_CFG[6:4]`, some useful values are:
 
-| Objetivo | Valor em `CPU_CFG` |
+| Goal | Value in `CPU_CFG` |
 |---|---:|
-| ROM de 40 KiB, 16 MHz | `0x00` |
-| RAM liberada, 16 MHz | `0x01` |
-| RAM liberada, 1 MHz | `0x41` |
-| RAM liberada, 125 kHz | `0x71` |
+| 40 KiB ROM, 16 MHz | `0x00` |
+| RAM released, 16 MHz | `0x01` |
+| RAM released, 1 MHz | `0x41` |
+| RAM released, 125 kHz | `0x71` |
 
-## Periféricos
+## Peripherals
 
-### Teclado
+### Keyboard
 
-`KEY_DATA` entrega os oito bits recebidos do teclado. Antes de ler, o software pode consultar:
+`KEY_DATA` provides the eight bits received from the keyboard. Before reading, software can check:
 
-- `/KEYBOARD_DETECT` em `SYSTEM_STATUS[6]`: zero indica teclado presente;
-- `KEY_READY` em `SYSTEM_STATUS[7]`: um indica byte disponível.
+- `/KEYBOARD_DETECT` in `SYSTEM_STATUS[6]`: zero indicates a keyboard is present;
+- `KEY_READY` in `SYSTEM_STATUS[7]`: one indicates an available byte.
 
 ```asm
 LDA $F300
@@ -386,34 +388,34 @@ JZ SEM_TECLA
 LDA $F000
 ```
 
-### Display de sete segmentos
+### Seven-Segment Display
 
-O WALL-8 possui quatro dígitos organizados em dois bytes:
+The WALL-8 has four digits arranged in two bytes:
 
-- `DISPLAY_LOW` controla o par inferior;
-- `DISPLAY_HIGH` controla o par superior;
-- cada nibble seleciona o símbolo de um dígito.
+- `DISPLAY_LOW` controls the lower pair;
+- `DISPLAY_HIGH` controls the upper pair;
+- each nibble selects the symbol for one digit.
 
-As duas EPROMs 27C512 do display usam o seguinte endereçamento:
+The two 27C512 display EPROMs use the following addressing:
 
-| Pinos | Uso |
+| Pins | Use |
 |---|---|
-| `A0-A7` | Byte escrito pela CPU |
-| `A8` | `DISP_CLOCK`: `0`: nibble alto/dígito esquerdo; `1`: nibble baixo/dígito direito |
-| `A9` | `0`: modo HEX; `1`: modo CHAR |
-| `A10-A15` | Ligados ao GND |
-| `D0-D6` | Segmentos A-G, ativos em nível baixo (`0` acende; `1` apaga) |
-| `D7` | Ponto decimal, não utilizado e mantido em `1` |
+| `A0-A7` | Byte written by the CPU |
+| `A8` | `DISP_CLOCK`: `0`: high nibble/left digit; `1`: low nibble/right digit |
+| `A9` | `0`: HEX mode; `1`: CHAR mode |
+| `A10-A15` | Connected to GND |
+| `D0-D6` | Segments A-G, active-low (`0` turns on; `1` turns off) |
+| `D7` | Decimal point, unused and held at `1` |
 
-Os displays são de ânodo comum. O multiplexador usa dois `BC327` PNP, também ativos em nível baixo: `DISP_CLOCK=0` habilita os dígitos esquerdos e `DISP_CLOCK=1` habilita os direitos.
+The displays are common-anode. The multiplexer uses two PNP `BC327` transistors, also active-low: `DISP_CLOCK=0` enables the left digits, and `DISP_CLOCK=1` enables the right digits.
 
-O script [`Software/source_file_dispDec/7Seg.py`](Software/source_file_dispDec/7Seg.py) gera `display_low.bin` e `display_high.bin`. Cada arquivo possui 65.536 bytes e os dois têm conteúdo idêntico; o que muda no circuito é o byte ligado a `A0-A7` de cada EPROM.
+The script [`Software/source_file_dispDec/7Seg.py`](Software/source_file_dispDec/7Seg.py) generates `display_low.bin` and `display_high.bin`. Each file contains 65,536 bytes, and both have identical contents; what changes in the circuit is the byte connected to `A0-A7` of each EPROM.
 
-No modo HEX, cada nibble mostra `0-F`. No modo CHAR, os códigos são:
+In HEX mode, each nibble displays `0-F`. In CHAR mode, the codes are:
 
-| Código | Símbolo | Código | Símbolo |
+| Code | Symbol | Code | Symbol |
 |:---:|:---:|:---:|:---:|
-| `0` | espaço | `8` | `L` |
+| `0` | space | `8` | `L` |
 | `1` | `A` | `9` | `O` |
 | `2` | `b` | `A` | `P` |
 | `3` | `C` | `B` | `r` |
@@ -422,91 +424,91 @@ No modo HEX, cada nibble mostra `0-F`. No modo CHAR, os códigos são:
 | `6` | `F` | `E` | `-` |
 | `7` | `H` | `F` | `_` |
 
-### Som
+### Sound
 
-O subsistema de áudio combina um gerador de tom e um gerador de ruído. Cada gerador possui três bits de seleção e um enable independente, permitindo beeps, efeitos simples e ruído de estilo retrô.
+The audio subsystem combines a tone generator and a noise generator. Each generator has three selection bits and an independent enable, allowing beeps, simple effects, and retro-style noise.
 
 ### Timers
 
-O sistema expõe dois eventos por polling:
+The system exposes two events through polling:
 
-- `TIMER_1MS`, com frequência real de 1024 Hz;
-- `TIMER_500MS`, para eventos lentos e temporização visual.
+- `TIMER_1MS`, with an actual frequency of 1024 Hz;
+- `TIMER_500MS`, for slow events and visual timing.
 
-Uma escrita em `0xF300` limpa os eventos armazenados.
+A write to `0xF300` clears the stored events.
 
-### Cartucho e expansão
+### Cartridge and Expansion
 
-A faixa `0xA000-0xEFFF` reserva 20 KiB para a memória do cartucho, selecionada por `/CARD_SEL`. A página `Y6` (`0xF600-0xF6FF`, espelhada em `0xFE00-0xFEFF`) é encaminhada ao cartucho por `/CARD_IO_SEL`. O hardware pode acomodar ROM, EEPROM, Flash, SRAM com bateria, lógica ou periféricos próprios. A presença é indicada por `/CARD_DETECT`.
+The `0xA000-0xEFFF` range reserves 20 KiB for cartridge memory, selected by `/CARD_SEL`. Page `Y6` (`0xF600-0xF6FF`, mirrored at `0xFE00-0xFEFF`) is routed to the cartridge through `/CARD_IO_SEL`. The hardware can accommodate ROM, EEPROM, Flash, battery-backed SRAM, logic, or its own peripherals. Presence is indicated by `/CARD_DETECT`.
 
-`Y6` pertence ao cartucho como `CART_IO`. O WALL-8 não define registradores nessa página: os offsets e suas funções são definidos pelo hardware de cada cartucho e controlados pelo código da própria ROM do cartucho. `Y7` permanece livre para expansão futura.
+`Y6` belongs to the cartridge as `CART_IO`. The WALL-8 does not define registers on this page: their offsets and functions are defined by each cartridge's hardware and controlled by the cartridge ROM's own code. `Y7` remains free for future expansion.
 
-## Interface de vídeo
+## Video Interface
 
-A GPU é uma placa separada com VRAM própria. O README documenta apenas o contrato visível pela CPU; detalhes de temporização VGA, arbitragem da VRAM, fonte e circuito ficam na [especificação da placa de vídeo](Hardware/GPU/wall8_GPU_Hardware.md).
+The GPU is a separate board with its own VRAM. This README documents only the interface visible to the CPU; details of VGA timing, VRAM arbitration, font, and circuitry are covered in the [video board specification](Hardware/GPU/wall8_GPU_Hardware.md).
 
-### Registradores
+### Registers
 
-| Endereço | Nome | Acesso | Função |
+| Address | Name | Access | Function |
 |---|---|:---:|---|
-| `0xF200` | `VIDEO_DATA` | R/W | Escrita solicita gravar um byte em X/Y; leitura devolve a última leitura de VRAM concluída. |
-| `0xF201` | `VIDEO_CTRL` | W | Configuração persistente de modo, páginas, cursor, incremento e banco de caracteres; sem leitura de retorno. |
-| `0xF202` | `VIDEO_X` | W | Coluna de caractere no texto ou coluna de byte nos gráficos; sem leitura de retorno. |
-| `0xF203` | `VIDEO_Y` | W | Linha da próxima operação; sem leitura de retorno. |
-| `0xF204` | `VIDEO_STATUS` | R | `BUSY` no bit 0 e `CURSOR_END` no bit 4; os demais bits retornam zero. |
-| `0xF205` | `READ_REQ` | W | Qualquer escrita solicita ler a VRAM em X/Y; o byte escrito é ignorado. |
-| `0xF206` | `CLEAR_REQ` | W | Qualquer escrita solicita CLEAR na página acessada pela CPU; o byte escrito é ignorado. |
-| `0xF207` | `CURSOR_END_RESET` | W | Qualquer escrita limpa `CURSOR_END`, sem alterar X/Y; o byte escrito é ignorado. |
+| `0xF200` | `VIDEO_DATA` | R/W | A write requests storing a byte at X/Y; a read returns the last completed VRAM read. |
+| `0xF201` | `VIDEO_CTRL` | W | Persistent settings for mode, pages, cursor, increment, and character bank; no readback. |
+| `0xF202` | `VIDEO_X` | W | Character column in text mode or byte column in graphics mode; no readback. |
+| `0xF203` | `VIDEO_Y` | W | Row of the next operation; no readback. |
+| `0xF204` | `VIDEO_STATUS` | R | `BUSY` in bit 0 and `CURSOR_END` in bit 4; other bits return zero. |
+| `0xF205` | `READ_REQ` | W | Any write requests a VRAM read at X/Y; the written byte is ignored. |
+| `0xF206` | `CLEAR_REQ` | W | Any write requests CLEAR on the CPU-accessed page; the written byte is ignored. |
+| `0xF207` | `CURSOR_END_RESET` | W | Any write clears `CURSOR_END` without changing X/Y; the written byte is ignored. |
 
-Os oito offsets aparecem em `0xF200-0xF207` e no espelho `0xFA00-0xFA07`. A GPU decodifica somente `A2-A0`: os mesmos offsets se repetem a cada oito bytes dentro de cada página de vídeo. A VRAM é acessada indiretamente por X/Y/DATA; não ocupa uma janela direta no espaço de memória da CPU.
+The eight offsets appear at `0xF200-0xF207` and in the mirror at `0xFA00-0xFA07`. The GPU decodes only `A2-A0`: the same offsets repeat every eight bytes within each video page. VRAM is accessed indirectly through X/Y/DATA; it does not occupy a direct window in the CPU memory space.
 
 ### `VIDEO_CTRL` — `0xF201`
 
-| Bit | Nome | Significado |
+| Bit | Name | Meaning |
 |---:|---|---|
-| 0 | `MODE_B0` | Bit 0 da seleção de modo. |
-| 1 | `MODE_B1` | Bit 1 da seleção de modo. |
-| 2 | `DOUBLE_BUFFER_EN` | 0: CPU e vídeo usam a página 0. 1: vídeo usa a página frontal e CPU acessa a página oposta. |
-| 3 | `DISPLAY_PAGE` | Página solicitada para exibição, 0 ou 1; a seleção é aplicada no início do `VBLANK`. |
-| 4 | `CURSOR_VISIBLE` | 1 habilita o cursor piscante no texto; 0 oculta o cursor. |
-| 5 | `AUTO_INCREMENT` | 1 avança X/Y após cada escrita em `VIDEO_DATA`; 0 mantém a posição. |
-| 6 | `Char_Bank_14` | Bit 0 do banco de caracteres da ROM, usado no modo texto. |
-| 7 | `Char_Bank_15` | Bit 1 do banco de caracteres da ROM, usado no modo texto. |
+| 0 | `MODE_B0` | Mode selection bit 0. |
+| 1 | `MODE_B1` | Mode selection bit 1. |
+| 2 | `DOUBLE_BUFFER_EN` | 0: CPU and video use page 0. 1: video uses the front page and the CPU accesses the opposite page. |
+| 3 | `DISPLAY_PAGE` | Requested display page, 0 or 1; the selection takes effect at the beginning of `VBLANK`. |
+| 4 | `CURSOR_VISIBLE` | 1 enables the blinking cursor in text mode; 0 hides it. |
+| 5 | `AUTO_INCREMENT` | 1 advances X/Y after each `VIDEO_DATA` write; 0 keeps the position. |
+| 6 | `Char_Bank_14` | Bit 0 of the ROM character bank, used in text mode. |
+| 7 | `Char_Bank_15` | Bit 1 of the ROM character bank, used in text mode. |
 
-`VIDEO_CTRL` substitui todos os oito bits a cada escrita e não possui valor de reset garantido. Inicialize-o explicitamente e mantenha uma cópia em RAM para alterar campos preservando os demais. `MODE_B1:MODE_B0` = 00 seleciona texto 80 x 30; 01, gráfico 320 x 240; 10, gráfico 160 x 120; 11 não é um modo implementado. Os bits 7:6 selecionam um dos quatro bancos de caracteres da ROM.
+`VIDEO_CTRL` replaces all eight bits on each write and has no guaranteed reset value. Initialize it explicitly and keep a copy in RAM to modify individual fields while preserving the others. `MODE_B1:MODE_B0` = 00 selects 80 × 30 text; 01, 320 × 240 graphics; 10, 160 × 120 graphics; 11 is not an implemented mode. Bits 7:6 select one of the ROM's four character banks.
 
-Com `DOUBLE_BUFFER_EN`=1, a VRAM é dividida em duas páginas de 16 KiB: a CPU lê, escreve e limpa a página oposta à exibida. `DISPLAY_PAGE` é uma solicitação aplicada no `VBLANK`; `VIDEO_STATUS` não confirma a página ativa, e `BUSY` não sinaliza nem confirma essa troca. Com `DOUBLE_BUFFER_EN`=0, ambos acessam a página 0.
+With `DOUBLE_BUFFER_EN`=1, VRAM is divided into two 16 KiB pages: the CPU reads, writes, and clears the page opposite the displayed one. `DISPLAY_PAGE` is a request applied during `VBLANK`; `VIDEO_STATUS` does not confirm the active page, and `BUSY` neither signals nor confirms this switch. With `DOUBLE_BUFFER_EN`=0, both use page 0.
 
 ### `VIDEO_STATUS` — `0xF204`
 
-| Bit | Nome | Significado |
+| Bit | Name | Meaning |
 |---:|---|---|
-| 0 | `BUSY` | 1 indica leitura, escrita ou CLEAR pendente/em execução; aguarde zero antes da próxima operação. |
-| 1-3 | reservado | Retornam zero; `VBLANK`, `HBLANK` e `FRAME` não são expostos à CPU. |
-| 4 | `CURSOR_END` | Flag retida: o avanço automático completou a área do modo ou o CLEAR terminou. |
-| 5-7 | reservado | Retornam zero. |
+| 0 | `BUSY` | 1 indicates a pending/in-progress read, write, or CLEAR; wait for zero before the next operation. |
+| 1-3 | Reserved | Return zero; `VBLANK`, `HBLANK`, and `FRAME` are not exposed to the CPU. |
+| 4 | `CURSOR_END` | Latched flag: auto-increment completed the mode's area or CLEAR finished. |
+| 5-7 | Reserved | Return zero. |
 
-A GPU executa uma operação de VRAM por vez. Enquanto `BUSY`=1, o software pode consultar `VIDEO_STATUS`, mas deve aguardar `BUSY`=0 antes de alterar `VIDEO_CTRL`, `VIDEO_X`, `VIDEO_Y` ou `VIDEO_DATA` ou escrever nos offsets de solicitação e reconhecimento. `READ_REQ` e `CLEAR_REQ` são ações por escrita, não campos de `VIDEO_CTRL`.
+The GPU performs one VRAM operation at a time. While `BUSY`=1, software can poll `VIDEO_STATUS`, but must wait until `BUSY`=0 before changing `VIDEO_CTRL`, `VIDEO_X`, `VIDEO_Y`, or `VIDEO_DATA`, or writing to the request and acknowledgment offsets. `READ_REQ` and `CLEAR_REQ` are write-triggered actions, not fields of `VIDEO_CTRL`.
 
-### Coordenadas e formato dos dados
+### Coordinates and Data Format
 
-| Modo (`VIDEO_CTRL[1:0]`) | `VIDEO_X` | `VIDEO_Y` | Significado de `VIDEO_DATA` |
+| Mode (`VIDEO_CTRL[1:0]`) | `VIDEO_X` | `VIDEO_Y` | Meaning of `VIDEO_DATA` |
 |---|---|---|---|
-| `00`: texto 80×30 | `0-79` | `0-29` | Código de caractere; 80 bytes úteis por linha |
-| `01`: gráfico 320×240 | `0-39` | `0-239` | 8 pixels por byte; 40 bytes úteis por linha |
-| `10`: gráfico 160×120 | `0-19` | `0-119` | 8 pixels por byte; 20 bytes úteis por linha |
+| `00`: 80×30 text | `0-79` | `0-29` | Character code; 80 useful bytes per row |
+| `01`: 320×240 graphics | `0-39` | `0-239` | 8 pixels per byte; 40 useful bytes per row |
+| `10`: 160×120 graphics | `0-19` | `0-119` | 8 pixels per byte; 20 useful bytes per row |
 
-No texto, a fonte de 8×8 é repetida 2× apenas na vertical. Os modos gráficos são ampliados 2× e 4×, respectivamente. Nos bytes gráficos, o bit 0 é o pixel mais à esquerda e o bit 7 é o mais à direita.
+In text mode, the 8×8 font is doubled vertically only. Graphics modes are scaled 2× and 4×, respectively. In graphics bytes, bit 0 is the leftmost pixel and bit 7 is the rightmost.
 
-`AUTO_INCREMENT` só afeta escritas em `VIDEO_DATA`: avança X, passa para a próxima linha e, ao completar a última linha, retorna X/Y a (0,0) e marca `CURSOR_END`. A flag não bloqueia novas escritas e permanece marcada até `CURSOR_END_RESET`, início de CLEAR ou reset geral. Escrever X/Y ou mudar o modo não limpa essa flag; a mudança de modo também não reinicializa X/Y.
+`AUTO_INCREMENT` affects only writes to `VIDEO_DATA`: it advances X, moves to the next row, and, after finishing the last row, returns X/Y to (0,0) and sets `CURSOR_END`. The flag does not block further writes and stays set until `CURSOR_END_RESET`, the start of CLEAR, or a general reset. Writing X/Y or changing the mode does not clear this flag; changing the mode also does not reinitialize X/Y.
 
-### Leitura e CLEAR
+### Reading and CLEAR
 
-Para ler a VRAM, aguarde `BUSY`=0, posicione X/Y, escreva qualquer byte em `READ_REQ`, aguarde `BUSY`=0 novamente e leia `VIDEO_DATA`. A leitura não incrementa X/Y; ler `VIDEO_DATA` sozinho não inicia uma nova leitura da VRAM.
+To read VRAM, wait for `BUSY`=0, set X/Y, write any byte to `READ_REQ`, wait again for `BUSY`=0, and read `VIDEO_DATA`. Reading does not increment X/Y; reading `VIDEO_DATA` alone does not start a new VRAM read.
 
-`CLEAR_REQ` reinicia X/Y em (0,0), limpa `CURSOR_END` no início e preenche com 0x00 a área válida do modo na página acessada pela CPU, independentemente de `AUTO_INCREMENT`. Ao terminar, X/Y voltam a (0,0) e `CURSOR_END` fica marcado. No texto, o caractere 0x00 deve ser vazio em cada banco da ROM para representar a limpeza.
+`CLEAR_REQ` resets X/Y to (0,0), clears `CURSOR_END` at the beginning, and fills the valid area of the mode on the CPU-accessed page with 0x00, regardless of `AUTO_INCREMENT`. Once finished, X/Y return to (0,0) and `CURSOR_END` becomes set. In text mode, character 0x00 must be blank in each ROM bank to represent a clear screen.
 
-### Polling de `BUSY`
+### Polling `BUSY`
 
 ```asm
 VIDEO_STATUS = $F204
@@ -518,44 +520,44 @@ VIDEO_WAIT:
     RET
 ```
 
-A presença física do módulo é verificada separadamente por `/VIDEO_DETECT`, em `SYSTEM_STATUS[5]`.
+The physical presence of the module is checked separately through `/VIDEO_DETECT` in `SYSTEM_STATUS[5]`.
 
-## Conjunto de instruções
+## Instruction Set
 
-A ISA atual contém **76 opcodes** distribuídos nos seguintes grupos:
+The current ISA contains **76 opcodes** divided into the following groups:
 
-| Grupo | Exemplos |
+| Group | Examples |
 |---|---|
-| Sistema | `NOP`, `HLT` |
+| System | `NOP`, `HLT` |
 | Load/store | `LDA`, `LDB`, `STA`, `STB`, `STI` |
-| Movimentação | `MOV A, B`, `MOV B, A` |
-| Ponteiro | `PTR`, `[PTR]`, `[PTR+]`, `INC PTR`, `DEC PTR` |
-| Aritmética | `ADD`, `SUB`, `INC`, `DEC` |
-| Lógica | `AND`, `OR`, `XOR`, `NOT`, `TEST` |
-| Deslocamento | `SHL`, `SHR` |
-| Comparação | `CMP` |
-| Desvio | `JMP`, `JZ`, `JNZ`, `JC`, `JNC`, `JN`, `JP`, `JV`, `JNV` |
-| Pilha e subrotinas | `SP`, `PUSH`, `POP`, `CALL`, `RET` |
+| Data movement | `MOV A, B`, `MOV B, A` |
+| Pointer | `PTR`, `[PTR]`, `[PTR+]`, `INC PTR`, `DEC PTR` |
+| Arithmetic | `ADD`, `SUB`, `INC`, `DEC` |
+| Logic | `AND`, `OR`, `XOR`, `NOT`, `TEST` |
+| Shift | `SHL`, `SHR` |
+| Comparison | `CMP` |
+| Branch | `JMP`, `JZ`, `JNZ`, `JC`, `JNC`, `JN`, `JP`, `JV`, `JNV` |
+| Stack and subroutines | `SP`, `PUSH`, `POP`, `CALL`, `RET` |
 
-Endereços de 16 bits são codificados em **little-endian**: primeiro o byte baixo, depois o byte alto. Por exemplo:
+16-bit addresses are encoded in **little-endian** order: low byte first, then high byte. For example:
 
 ```asm
 LDA $1234
 ```
 
-é montado como:
+is assembled as:
 
 ```text
 12 34 12
 ```
 
-Consulte [`Software/wall8_instrucoes.md`](Software/wall8_instrucoes.md) para a tabela completa de opcodes, formatos, ciclos, flags e exemplos.
+See [`Software/wall8_instrucoes.md`](Software/wall8_instrucoes.md) for the full table of opcodes, formats, cycles, flags, and examples.
 
-## Programando o WALL-8
+## Programming the WALL-8
 
-O arquivo [`Software/wall8.cpu`](Software/wall8.cpu) define a sintaxe da ISA para o **customasm**.
+The [`Software/wall8.cpu`](Software/wall8.cpu) file defines the ISA syntax for **customasm**.
 
-### Exemplo mínimo
+### Minimal Example
 
 ```asm
 #include "wall8.cpu"
@@ -569,104 +571,104 @@ loop:
     JMP loop
 ```
 
-### Montagem
+### Assembly
 
-O repositório inclui o executável do customasm para Windows em [`Software/Tools/customasm.exe`](Software/Tools/customasm.exe). Os arquivos `build.bat` das pastas `BIOS`, `CARD` e `Checkup` utilizam esse executável para montar os arquivos `.asm` e gerar os respectivos `.bin`.
+The repository includes the customasm executable for Windows at [`Software/Tools/customasm.exe`](Software/Tools/customasm.exe). The `build.bat` files in the `BIOS`, `CARD`, and `Checkup` directories use this executable to assemble `.asm` files and generate the corresponding `.bin` files.
 
-No Windows, entre na pasta desejada e execute:
+On Windows, enter the desired directory and run:
 
 ```bat
 build.bat
 ```
 
-Também é possível instalar o [customasm](https://github.com/hlorenzi/customasm) separadamente e montar um arquivo manualmente:
+You can also install [customasm](https://github.com/hlorenzi/customasm) separately and assemble a file manually:
 
 ```bash
 customasm programa.asm -f binary -o programa.bin
 ```
 
-Antes de gravar uma BIOS, escolha uma das duas estratégias:
+Before programming a BIOS, choose one of two strategies:
 
-1. **ROM contínua:** mantenha `/BOOT_ROM_EN=0` e use até 40 KiB entre `0x0000` e `0x9FFF`, sem RAM.
-2. **Boot com RAM:** inicie em `0x0000`, transfira a execução para uma rotina residente entre `0x8000` e `0x9FFF` e somente então grave `1` em `/BOOT_ROM_EN`.
+1. **Continuous ROM:** keep `/BOOT_ROM_EN=0` and use up to 40 KiB from `0x0000` to `0x9FFF`, without RAM.
+2. **Boot with RAM:** start at `0x0000`, transfer execution to a resident routine between `0x8000` and `0x9FFF`, and only then write `1` to `/BOOT_ROM_EN`.
 
-Ao escrever software para periféricos, respeite os níveis ativos indicados pelos nomes: sinais com `/` são ativos em zero; nomes sem `/` usam lógica positiva.
+When writing software for peripherals, respect the active levels indicated by the signal names: signals with `/` are active-low; names without `/` use positive logic.
 
-## Arquivos e ferramentas do projeto
+## Project Files and Tools
 
 
 
 ### Hardware
 
-A pasta [`Hardware`](Hardware/) contém o projeto do Proteus e o PDF [`Hardware_CPU_Completo.pdf`](Hardware/Hardware_CPU_Completo.pdf), que possui somente as folhas do esquema eletrônico. Esse PDF é útil para consulta direta do circuito e permanece separado do manual técnico consolidado.
+The [`Hardware`](Hardware/) directory contains the Proteus project and the PDF [`Hardware_CPU_Completo.pdf`](Hardware/Hardware_CPU_Completo.pdf), which contains only the electronic schematic sheets. This PDF is useful for direct circuit reference and remains separate from the consolidated technical manual.
 
-### Imagens das memórias 27C512
+### 27C512 Memory Images
 
-A pasta [`Software/27C512`](Software/27C512/) reúne as imagens prontas para gravação:
+The [`Software/27C512`](Software/27C512/) directory contains ready-to-program images:
 
-- `microcode_rom1.bin` a `microcode_rom5.bin`: os cinco bytes paralelos da palavra de microcódigo;
-- `display_low.bin` e `display_high.bin`: decodificação dos quatro displays em modos HEX e CHAR.
+- `microcode_rom1.bin` through `microcode_rom5.bin`: the five parallel bytes of the microcode word;
+- `display_low.bin` and `display_high.bin`: decoding for the four displays in HEX and CHAR modes.
 
-O [`Gerador_Microcodigo.py`](Software/Gerador_Microcodigo.py) cria cinco imagens de 65.536 bytes, uma para cada ROM de controle. O [`7Seg.py`](Software/source_file_dispDec/7Seg.py) cria as duas imagens de 65.536 bytes do display.
+[`Gerador_Microcodigo.py`](Software/Gerador_Microcodigo.py) creates five 65,536-byte images, one for each control ROM. [`7Seg.py`](Software/source_file_dispDec/7Seg.py) creates the two 65,536-byte display images.
 
 ### BIOS
 
-A pasta [`Software/BIOS`](Software/BIOS/) contém duas versões com finalidades diferentes:
+The [`Software/BIOS`](Software/BIOS/) directory contains two versions with different purposes:
 
-| Arquivo | Finalidade |
+| File | Purpose |
 |---|---|
-| `bios_default.asm` | BIOS mínima, usada como ponto de partida para um programa simples, equivalente a um “Hello World” do WALL-8 |
-| [`wall8_bios_monitor_v5.asm`](Software/BIOS/wall8_bios_monitor_v5.asm) | BIOS principal, com monitor e terminal |
+| `bios_default.asm` | Minimal BIOS, used as a starting point for a simple program, equivalent to a WALL-8 “Hello World” |
+| [`wall8_bios_monitor_v5.asm`](Software/BIOS/wall8_bios_monitor_v5.asm) | Main BIOS, with monitor and terminal |
 
-Os arquivos `.bin` correspondentes ficam na mesma pasta e podem ser regenerados pelo `build.bat`.
+The corresponding `.bin` files are in the same directory and can be regenerated with `build.bat`.
 
-### Cartuchos
+### Cartridges
 
-A pasta [`Software/CARD`](Software/CARD/) contém imagens para a região de cartucho:
+The [`Software/CARD`](Software/CARD/) directory contains images for the cartridge region:
 
-| Arquivo | Finalidade |
+| File | Purpose |
 |---|---|
-| `CARD_default.asm` | Estrutura mínima de cartucho, equivalente à proposta da BIOS default |
-| `CARD_01.asm` | Primeiro programa de exemplo |
-| `CARD_02.asm` | Segundo programa de exemplo |
+| `CARD_default.asm` | Minimal cartridge structure, equivalent to the default BIOS approach |
+| `CARD_01.asm` | First example program |
+| `CARD_02.asm` | Second example program |
 
-Cada exemplo possui ou pode gerar seu `.bin` correspondente por meio do `build.bat`.
+Each example has, or can generate, its corresponding `.bin` using `build.bat`.
 
 ### Checkup
 
-O [`Software/Checkup`](Software/Checkup/) é o programa de diagnóstico geral do WALL-8. Ele foi criado para revisar o funcionamento integrado da máquina, incluindo memória, timers, teclado, vídeo, som, cartucho e sinais de presença.
+[`Software/Checkup`](Software/Checkup/) is the WALL-8 general diagnostic program. It was created to check the integrated operation of the machine, including memory, timers, keyboard, video, sound, cartridge, and presence signals.
 
-- `wall8_checkup_completo_v1.asm`: código-fonte do diagnóstico;
-- `wall8_checkup_completo_v1.bin`: imagem pronta para execução;
-- `wall8_checkup_completo_v1_guia.md`: roteiro e interpretação dos testes;
-- `build.bat`: geração da imagem binária.
+- `wall8_checkup_completo_v1.asm`: diagnostic source code;
+- `wall8_checkup_completo_v1.bin`: ready-to-run image;
+- `wall8_checkup_completo_v1_guia.md`: test procedure and interpretation;
+- `build.bat`: binary image generation.
 
-### Ferramentas auxiliares
+### Auxiliary Tools
 
-| Caminho | Função |
+| Path | Function |
 |---|---|
-| [`Software/Tools/customasm.exe`](Software/Tools/customasm.exe) | Montador utilizado pelos scripts `build.bat` |
-| [`Software/wall8.cpu`](Software/wall8.cpu) | Regras da ISA do WALL-8 para o customasm |
-| [`Software/Gerador_Microcodigo.py`](Software/Gerador_Microcodigo.py) | Geração das ROMs de microcódigo |
-| [`Software/source_file_dispDec/7Seg.py`](Software/source_file_dispDec/7Seg.py) | Geração das ROMs dos displays |
-| [`Software/wall8_emulador.py`](Software/wall8_emulador.py) | Simulador do Wall-8 |
-| [`Software/Gerador_ROM_Caracteres.py`](Software/Gerador_ROM_Caracteres.py) | Gerador do banco de caracteres da GPU |
+| [`Software/Tools/customasm.exe`](Software/Tools/customasm.exe) | Assembler used by the `build.bat` scripts |
+| [`Software/wall8.cpu`](Software/wall8.cpu) | WALL-8 ISA rules for customasm |
+| [`Software/Gerador_Microcodigo.py`](Software/Gerador_Microcodigo.py) | Microcode ROM generation |
+| [`Software/source_file_dispDec/7Seg.py`](Software/source_file_dispDec/7Seg.py) | Display ROM generation |
+| [`Software/wall8_emulador.py`](Software/wall8_emulador.py) | WALL-8 simulator |
+| [`Software/Gerador_ROM_Caracteres.py`](Software/Gerador_ROM_Caracteres.py) | GPU character bank generator |
 
-## Documentação
+## Documentation
 
-- [Manual de Referência Técnica da CPU — revisão 1.3](WALL-8_Manual_de_Referencia_Tecnica_Rev1.3.odt) — documento consolidado em formato ODT;
-- [Manual de Referência Técnica da GPU — revisão 1.0](Hardware/GPU/WALL-8_GPU_Manual_de_Referencia_Tecnica_Rev1.0.odt) — documento consolidado em formato ODT;
-- [Referência completa das instruções](Software/wall8_instrucoes.md) — opcodes, bytes, ciclos, flags e exemplos;
-- [Especificação da placa de vídeo](Hardware/GPU/wall8_GPU_Hardware.md) — protocolo, registradores, modos e arquitetura da GPU;
-- [Guia do Checkup](Software/Checkup/wall8_checkup_completo_v1_guia.md) — sequência de testes do diagnóstico geral;
-- [Esquema eletrônico completo](Hardware/Hardware_CPU_Completo.pdf) — folhas exportadas do Proteus;
-- [Esquema eletrônico completo da GPU](Hardware/GPU/Hardware_GPU_Completo.pdf) — folhas exportadas do Proteus;
-- [Fluxograma da arquitetura](fluxograma_A4_horizontal.pdf) — visão gráfica em formato A4.
+- [CPU Technical Reference Manual — revision 1.3](WALL-8_Manual_de_Referencia_Tecnica_Rev1.3.odt) — consolidated document in ODT format;
+- [GPU Technical Reference Manual — revision 1.0](Hardware/GPU/WALL-8_GPU_Manual_de_Referencia_Tecnica_Rev1.0.odt) — consolidated document in ODT format;
+- [Complete Instruction Reference](Software/wall8_instrucoes.md) — opcodes, bytes, cycles, flags, and examples;
+- [Video Board Specification](Hardware/GPU/wall8_GPU_Hardware.md) — protocol, registers, modes, and GPU architecture;
+- [Checkup Guide](Software/Checkup/wall8_checkup_completo_v1_guia.md) — test sequence for the general diagnostics;
+- [Complete Electronic Schematic](Hardware/Hardware_CPU_Completo.pdf) — sheets exported from Proteus;
+- [Complete GPU Electronic Schematic](Hardware/GPU/Hardware_GPU_Completo.pdf) — sheets exported from Proteus;
+- [Architecture Flowchart](fluxograma_A4_horizontal.pdf) — graphical overview in A4 format.
 
 
 
-## Créditos
+## Credits
 
-Projeto e arquitetura do WALL-8: **Vinicius Dias de Jesus**.
+WALL-8 project and architecture: **Vinicius Dias de Jesus**.
 
-Os exemplos de Assembly e o arquivo de definição da CPU usam o projeto [customasm](https://github.com/hlorenzi/customasm), de **hlorenzi**. Agradecimentos ao autor e aos colaboradores por disponibilizarem um montador flexível para arquiteturas personalizadas.
+The Assembly examples and CPU definition file use the [customasm](https://github.com/hlorenzi/customasm) project by **hlorenzi**. Thanks to the author and contributors for providing a flexible assembler for custom architectures.
